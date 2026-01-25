@@ -7,18 +7,18 @@ Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and
 - Go 1.24+ (for building from source)
 - Access to the serial device (for example `/dev/ttyUSB0` on Linux or `/dev/tty.usb*` on macOS)
 
-## Build and run (local)
+## Install and run (local)
 
-Build:
+Install with `go install`:
 
 ```bash
-go build -o meshtastic-serial2tcp .
+go install github.com/skrashevich/go-meshtastic-serial2tcp@latest
 ```
 
 Run with flags:
 
 ```bash
-./meshtastic-serial2tcp \
+meshtastic-serial2tcp \
   --device /dev/ttyUSB0 \
   --baud 115200 \
   --tcp-port 4403
@@ -30,10 +30,31 @@ Run with environment variables:
 SERIAL_DEVICE=/dev/ttyUSB0 \
 BAUD_RATE=115200 \
 TCP_PORT=4403 \
-./meshtastic-serial2tcp
+meshtastic-serial2tcp
 ```
 
 If you get a permission error for the serial device, make sure your user has access to it (for example, add your user to the `dialout` group on Linux or run with elevated permissions).
+
+
+## Docker
+
+Run a prebuilt image from GitHub Container Registry:
+
+```bash
+docker run --rm \
+  --device /dev/ttyUSB0 \
+  -p 4403:4403 \
+  -e SERIAL_DEVICE=/dev/ttyUSB0 \
+  -e BAUD_RATE=115200 \
+  -e TCP_PORT=4403 \
+  ghcr.io/skrashevich/go-meshtastic-serial2tcp:latest
+```
+
+Notes:
+
+- For mDNS on Linux, you may need `--network host` so multicast announcements reach your LAN. If not required, set `-e MDNS_ENABLED=false`.
+- If the container can’t open the serial device, ensure the device is passed through and that permissions allow access.
+
 
 ## Configuration
 
@@ -54,39 +75,3 @@ Healthcheck:
 
 When enabled, the service advertises `_meshtastic._tcp.local.` with details about the serial device and baud rate. If mDNS is not needed or doesn’t work in your environment, disable it with `MDNS_ENABLED=false` or `--mdns=false`.
 
-## Docker
-
-Run a prebuilt image from GitHub Container Registry:
-
-```bash
-docker run --rm \
-  --device /dev/ttyUSB0 \
-  -p 4403:4403 \
-  -e SERIAL_DEVICE=/dev/ttyUSB0 \
-  -e BAUD_RATE=115200 \
-  -e TCP_PORT=4403 \
-  ghcr.io/skrashevich/go-meshtastic-serial2tcp:latest
-```
-
-Build the image:
-
-```bash
-docker build -t go-meshtastic-serial2tcp .
-```
-
-Run (Linux host example):
-
-```bash
-docker run --rm \
-  --device /dev/ttyUSB0 \
-  -p 4403:4403 \
-  -e SERIAL_DEVICE=/dev/ttyUSB0 \
-  -e BAUD_RATE=115200 \
-  -e TCP_PORT=4403 \
-  go-meshtastic-serial2tcp
-```
-
-Notes:
-
-- For mDNS on Linux, you may need `--network host` so multicast announcements reach your LAN. If not required, set `-e MDNS_ENABLED=false`.
-- If the container can’t open the serial device, ensure the device is passed through and that permissions allow access.
