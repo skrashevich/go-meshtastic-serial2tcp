@@ -1,6 +1,6 @@
 # go-meshtastic-serial2tcp
 
-Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and forwards Meshtastic frames to the configured serial device. Multiple TCP clients can connect: the first client is primary (read/write), others are read-only and receive broadcasts (with cached config replies for `want_config_id`).
+Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and forwards Meshtastic frames to the configured serial device. Multiple TCP clients can connect. By default all clients are read/write. If you enable read-only mode, the first client is primary (read/write), others are read-only and receive broadcasts (with cached config replies for `want_config_id`).
 
 ## Requirements
 
@@ -65,6 +65,7 @@ Environment variables (and matching flags):
 - `TCP_PORT` (default: `4403`) -> `--tcp-port`
 - `RECONNECT_DELAY` (default: `5`, seconds) -> `--reconnect-delay`
 - `MDNS_ENABLED` (default: `true`) -> `--mdns`
+- `READ_ONLY_CLIENTS` (default: `false`) -> `--read-only-clients`
 - `SERVICE_NAME` (default: `Meshtastic Serial Bridge (<device>)`) -> `--service-name`
 
 Healthcheck:

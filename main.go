@@ -43,12 +43,13 @@ const (
 )
 
 type config struct {
-	device         string
-	baud           int
-	tcpPort        int
-	reconnectDelay time.Duration
-	serviceName    string
-	mdnsEnabled    bool
+	device          string
+	baud            int
+	tcpPort         int
+	reconnectDelay  time.Duration
+	serviceName     string
+	mdnsEnabled     bool
+	readOnlyClients bool
 }
 
 var (
@@ -100,6 +101,7 @@ func loadConfig() (config, bool) {
 	tcpPort := getenvInt("TCP_PORT", 4403)
 	reconnectDelaySeconds := getenvInt("RECONNECT_DELAY", 5)
 	mdnsEnabled := getenvBool("MDNS_ENABLED", true)
+	readOnlyClients := getenvBool("READ_ONLY_CLIENTS", false)
 	serviceName := getenv("SERVICE_NAME", "")
 
 	healthcheck := flag.Bool("healthcheck", false, "exit 0 if the TCP port is reachable")
@@ -108,6 +110,7 @@ func loadConfig() (config, bool) {
 	tcpPortFlag := flag.Int("tcp-port", tcpPort, "TCP listen port (env TCP_PORT)")
 	reconnectDelayFlag := flag.Int("reconnect-delay", reconnectDelaySeconds, "seconds to wait before reconnect (env RECONNECT_DELAY)")
 	mdnsEnabledFlag := flag.Bool("mdns", mdnsEnabled, "enable mDNS discovery (env MDNS_ENABLED)")
+	readOnlyClientsFlag := flag.Bool("read-only-clients", readOnlyClients, "make secondary clients read-only (env READ_ONLY_CLIENTS)")
 	serviceNameFlag := flag.String("service-name", serviceName, "mDNS service name (env SERVICE_NAME)")
 
 	flag.Parse()
@@ -121,18 +124,20 @@ func loadConfig() (config, bool) {
 	tcpPort = normalizePositiveInt("tcp-port", *tcpPortFlag, tcpPort)
 	reconnectDelaySeconds = normalizePositiveInt("reconnect-delay", *reconnectDelayFlag, reconnectDelaySeconds)
 	mdnsEnabled = *mdnsEnabledFlag
+	readOnlyClients = *readOnlyClientsFlag
 	serviceName = strings.TrimSpace(*serviceNameFlag)
 	if serviceName == "" {
 		serviceName = fmt.Sprintf("Meshtastic Serial Bridge (%s)", sanitizeDeviceName(device))
 	}
 
 	return config{
-		device:         device,
-		baud:           baud,
-		tcpPort:        tcpPort,
-		reconnectDelay: time.Duration(reconnectDelaySeconds) * time.Second,
-		serviceName:    serviceName,
-		mdnsEnabled:    mdnsEnabled,
+		device:          device,
+		baud:            baud,
+		tcpPort:         tcpPort,
+		reconnectDelay:  time.Duration(reconnectDelaySeconds) * time.Second,
+		serviceName:     serviceName,
+		mdnsEnabled:     mdnsEnabled,
+		readOnlyClients: readOnlyClients,
 	}, *healthcheck
 }
 
@@ -147,6 +152,9 @@ func printBanner(cfg config) {
 	log.Printf("  Baud: %d", cfg.baud)
 	log.Printf("  TCP Port: %d", cfg.tcpPort)
 	log.Printf("  Reconnect Delay: %s", cfg.reconnectDelay)
+	if cfg.readOnlyClients {
+		log.Printf("  Read-Only Clients: enabled")
+	}
 }
 
 func runServer(ctx context.Context, cfg config) error {
@@ -220,7 +228,7 @@ func runServer(ctx context.Context, cfg config) error {
 		start := time.Now()
 		log.Printf("  Connected to: %s @ %dbps", cfg.device, cfg.baud)
 
-		b := newProtocolBroker(serial)
+		b := newProtocolBroker(serial, cfg.readOnlyClients)
 		brokerMu.Lock()
 		broker = b
 		brokerMu.Unlock()
@@ -644,12 +652,13 @@ type configRequest struct {
 }
 
 type protocolBroker struct {
-	serial    *os.File
-	serialMu  sync.Mutex
-	clients   map[*client]struct{}
-	clientsMu sync.RWMutex
-	primary   *client
-	cache     *configCache
+	serial          *os.File
+	serialMu        sync.Mutex
+	clients         map[*client]struct{}
+	clientsMu       sync.RWMutex
+	primary         *client
+	cache           *configCache
+	readOnlyClients bool
 
 	pendingMu     sync.Mutex
 	pendingConfig map[uint32]configRequest
@@ -659,13 +668,14 @@ type protocolBroker struct {
 	err     error
 }
 
-func newProtocolBroker(serial *os.File) *protocolBroker {
+func newProtocolBroker(serial *os.File, readOnlyClients bool) *protocolBroker {
 	return &protocolBroker{
-		serial:        serial,
-		clients:       make(map[*client]struct{}),
-		cache:         newConfigCache(),
-		pendingConfig: make(map[uint32]configRequest),
-		done:          make(chan struct{}),
+		serial:          serial,
+		clients:         make(map[*client]struct{}),
+		cache:           newConfigCache(),
+		readOnlyClients: readOnlyClients,
+		pendingConfig:   make(map[uint32]configRequest),
+		done:            make(chan struct{}),
 	}
 }
 
@@ -763,19 +773,27 @@ func (b *protocolBroker) addClient(conn net.Conn) {
 		addr: conn.RemoteAddr().String(),
 	}
 
-	var makePrimary bool
 	b.clientsMu.Lock()
 	b.clients[client] = struct{}{}
-	if b.primary == nil {
-		b.primary = client
-		makePrimary = true
+	makePrimary := false
+	readOnly := false
+	if b.readOnlyClients {
+		if b.primary == nil {
+			b.primary = client
+			makePrimary = true
+		} else {
+			readOnly = true
+		}
 	}
 	b.clientsMu.Unlock()
 
-	if makePrimary {
+	switch {
+	case makePrimary:
 		log.Printf("Client connected (primary): %s", client.addr)
-	} else {
+	case readOnly:
 		log.Printf("Client connected (read-only): %s", client.addr)
+	default:
+		log.Printf("Client connected (read-write): %s", client.addr)
 	}
 
 	go b.writeLoop(client)
@@ -783,6 +801,9 @@ func (b *protocolBroker) addClient(conn net.Conn) {
 }
 
 func (b *protocolBroker) isPrimary(client *client) bool {
+	if !b.readOnlyClients {
+		return true
+	}
 	b.clientsMu.RLock()
 	defer b.clientsMu.RUnlock()
 	return b.primary == client
@@ -946,13 +967,15 @@ func (b *protocolBroker) removeClient(cl *client) {
 		delete(b.clients, cl)
 		removed = true
 	}
-	if b.primary == cl {
-		wasPrimary = true
-		b.primary = nil
-		for candidate := range b.clients {
-			b.primary = candidate
-			newPrimary = candidate
-			break
+	if b.readOnlyClients {
+		if b.primary == cl {
+			wasPrimary = true
+			b.primary = nil
+			for candidate := range b.clients {
+				b.primary = candidate
+				newPrimary = candidate
+				break
+			}
 		}
 	}
 	b.clientsMu.Unlock()
