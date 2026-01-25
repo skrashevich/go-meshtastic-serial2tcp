@@ -1,6 +1,6 @@
 # go-meshtastic-serial2tcp
 
-Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and forwards bytes to the configured serial device (and back), keeping the connection open until either side disconnects.
+Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and forwards Meshtastic frames to the configured serial device. Multiple TCP clients can connect: the first client is primary (read/write), others are read-only and receive broadcasts (with cached config replies for `want_config_id`).
 
 ## Requirements
 
@@ -74,4 +74,3 @@ Healthcheck:
 ## mDNS discovery
 
 When enabled, the service advertises `_meshtastic._tcp.local.` with details about the serial device and baud rate. If mDNS is not needed or doesn’t work in your environment, disable it with `MDNS_ENABLED=false` or `--mdns=false`.
-
