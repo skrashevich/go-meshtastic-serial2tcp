@@ -67,10 +67,15 @@ Environment variables (and matching flags):
 - `MDNS_ENABLED` (default: `true`) -> `--mdns`
 - `READ_ONLY_CLIENTS` (default: `false`) -> `--read-only-clients`
 - `SERVICE_NAME` (default: `Meshtastic Serial Bridge (<device>)`) -> `--service-name`
+- `DEBUG` (default: `false`) -> `--debug`
 
 Healthcheck:
 
 - `--healthcheck` exits with code 0 if the TCP port is reachable on `127.0.0.1`.
+
+Debug logging:
+
+- Enable with `DEBUG=true` or `--debug` to get extra protocol details in logs (useful for troubleshooting; can be noisy).
 
 ## mDNS discovery
 

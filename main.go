@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	_ "embed"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	meshtasticpb "github.com/skrashevich/go-meshtastic-serial2tcp/internal/meshtastic/meshtastic"
 	"github.com/skrashevich/go-meshtastic-serial2tcp/termios"
 	"golang.org/x/sys/unix"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -33,6 +35,8 @@ const (
 	maxRapidFails     = 5
 	clientSendBuffer  = 64
 	clientSendTimeout = 5 * time.Second
+	debugMaxBytes     = 256
+	debugMaxDecoded   = 2048
 	maxFrameSize      = 64*1024 - 1
 	version           = "0.1"
 )
@@ -50,10 +54,19 @@ type config struct {
 	serviceName     string
 	mdnsEnabled     bool
 	readOnlyClients bool
+	debug           bool
 }
 
 var (
 	errSerialClosed = errors.New("serial disconnected")
+)
+
+type payloadKind int
+
+const (
+	payloadUnknown payloadKind = iota
+	payloadFromRadio
+	payloadToRadio
 )
 
 func main() {
@@ -102,6 +115,7 @@ func loadConfig() (config, bool) {
 	reconnectDelaySeconds := getenvInt("RECONNECT_DELAY", 5)
 	mdnsEnabled := getenvBool("MDNS_ENABLED", true)
 	readOnlyClients := getenvBool("READ_ONLY_CLIENTS", false)
+	debug := getenvBool("DEBUG", false)
 	serviceName := getenv("SERVICE_NAME", "")
 
 	healthcheck := flag.Bool("healthcheck", false, "exit 0 if the TCP port is reachable")
@@ -111,6 +125,7 @@ func loadConfig() (config, bool) {
 	reconnectDelayFlag := flag.Int("reconnect-delay", reconnectDelaySeconds, "seconds to wait before reconnect (env RECONNECT_DELAY)")
 	mdnsEnabledFlag := flag.Bool("mdns", mdnsEnabled, "enable mDNS discovery (env MDNS_ENABLED)")
 	readOnlyClientsFlag := flag.Bool("read-only-clients", readOnlyClients, "make secondary clients read-only (env READ_ONLY_CLIENTS)")
+	debugFlag := flag.Bool("debug", debug, "enable debug logging (env DEBUG)")
 	serviceNameFlag := flag.String("service-name", serviceName, "mDNS service name (env SERVICE_NAME)")
 
 	flag.Parse()
@@ -125,6 +140,7 @@ func loadConfig() (config, bool) {
 	reconnectDelaySeconds = normalizePositiveInt("reconnect-delay", *reconnectDelayFlag, reconnectDelaySeconds)
 	mdnsEnabled = *mdnsEnabledFlag
 	readOnlyClients = *readOnlyClientsFlag
+	debug = *debugFlag
 	serviceName = strings.TrimSpace(*serviceNameFlag)
 	if serviceName == "" {
 		serviceName = fmt.Sprintf("Meshtastic Serial Bridge (%s)", sanitizeDeviceName(device))
@@ -138,6 +154,7 @@ func loadConfig() (config, bool) {
 		serviceName:     serviceName,
 		mdnsEnabled:     mdnsEnabled,
 		readOnlyClients: readOnlyClients,
+		debug:           debug,
 	}, *healthcheck
 }
 
@@ -154,6 +171,9 @@ func printBanner(cfg config) {
 	log.Printf("  Reconnect Delay: %s", cfg.reconnectDelay)
 	if cfg.readOnlyClients {
 		log.Printf("  Read-Only Clients: enabled")
+	}
+	if cfg.debug {
+		log.Printf("  Debug Logging: enabled")
 	}
 }
 
@@ -228,7 +248,7 @@ func runServer(ctx context.Context, cfg config) error {
 		start := time.Now()
 		log.Printf("  Connected to: %s @ %dbps", cfg.device, cfg.baud)
 
-		b := newProtocolBroker(serial, cfg.readOnlyClients)
+		b := newProtocolBroker(serial, cfg.readOnlyClients, cfg.debug)
 		brokerMu.Lock()
 		broker = b
 		brokerMu.Unlock()
@@ -659,6 +679,7 @@ type protocolBroker struct {
 	primary         *client
 	cache           *configCache
 	readOnlyClients bool
+	debug           bool
 
 	pendingMu     sync.Mutex
 	pendingConfig map[uint32]configRequest
@@ -668,12 +689,13 @@ type protocolBroker struct {
 	err     error
 }
 
-func newProtocolBroker(serial *os.File, readOnlyClients bool) *protocolBroker {
+func newProtocolBroker(serial *os.File, readOnlyClients bool, debug bool) *protocolBroker {
 	return &protocolBroker{
 		serial:          serial,
 		clients:         make(map[*client]struct{}),
 		cache:           newConfigCache(),
 		readOnlyClients: readOnlyClients,
+		debug:           debug,
 		pendingConfig:   make(map[uint32]configRequest),
 		done:            make(chan struct{}),
 	}
@@ -704,6 +726,69 @@ func (b *protocolBroker) fail(err error) {
 	})
 }
 
+func (b *protocolBroker) logPayload(direction, addr string, payload []byte, kind payloadKind) {
+	if !b.debug {
+		return
+	}
+	label := direction
+	if addr != "" {
+		label = fmt.Sprintf("%s [%s]", direction, addr)
+	}
+	limit := payload
+	truncated := ""
+	if len(payload) > debugMaxBytes {
+		limit = payload[:debugMaxBytes]
+		truncated = fmt.Sprintf(" ...(truncated %d bytes)", len(payload)-debugMaxBytes)
+	}
+	hexPayload := hex.EncodeToString(limit)
+	if len(payload) == 0 {
+		log.Printf("%s (0 bytes)", label)
+		return
+	}
+	log.Printf("%s (%d bytes): %s%s", label, len(payload), hexPayload, truncated)
+	//b.logDecodedPayload(direction, addr, payload, kind)
+}
+
+func (b *protocolBroker) logDecodedPayload(direction, addr string, payload []byte, kind payloadKind) {
+	var msg proto.Message
+	switch kind {
+	case payloadFromRadio:
+		frame := &meshtasticpb.FromRadio{}
+		if err := proto.Unmarshal(payload, frame); err != nil {
+			return
+		}
+		msg = frame
+	case payloadToRadio:
+		frame := &meshtasticpb.ToRadio{}
+		if err := proto.Unmarshal(payload, frame); err != nil {
+			return
+		}
+		msg = frame
+	default:
+		return
+	}
+
+	data, err := protojson.MarshalOptions{
+		UseProtoNames: true,
+		Multiline:     false,
+	}.Marshal(msg)
+	if err != nil {
+		return
+	}
+
+	decoded := string(data)
+	truncated := ""
+	if len(decoded) > debugMaxDecoded {
+		decoded = decoded[:debugMaxDecoded]
+		truncated = fmt.Sprintf(" ...(truncated %d chars)", len(decoded)-debugMaxDecoded)
+	}
+	label := direction
+	if addr != "" {
+		label = fmt.Sprintf("%s [%s]", direction, addr)
+	}
+	log.Printf("%s decoded: %s%s", label, decoded, truncated)
+}
+
 func (b *protocolBroker) readSerial(errCh chan<- error) {
 	reader := bufio.NewReader(b.serial)
 	for {
@@ -722,6 +807,7 @@ func (b *protocolBroker) readSerial(errCh chan<- error) {
 			errCh <- err
 			return
 		}
+		b.logDecodedPayload("serial -> broker", "", payload, payloadFromRadio)
 
 		frame := &meshtasticpb.FromRadio{}
 		if err := proto.Unmarshal(payload, frame); err != nil {
@@ -817,6 +903,7 @@ func (b *protocolBroker) readLoop(client *client) {
 			b.removeClient(client)
 			return
 		}
+		b.logDecodedPayload("client -> broker", client.addr, payload, payloadToRadio)
 		b.handleClientPayload(client, payload)
 	}
 }
@@ -894,6 +981,7 @@ func (b *protocolBroker) broadcast(payload []byte) {
 
 func (b *protocolBroker) sendToClient(client *client, payload []byte) {
 	if ok := client.enqueue(payload); ok {
+		b.logDecodedPayload("broker -> client", client.addr, payload, payloadFromRadio)
 		return
 	}
 	if !b.isPrimary(client) {
@@ -908,6 +996,7 @@ func (b *protocolBroker) sendToClient(client *client, payload []byte) {
 
 func (b *protocolBroker) sendToClientBlocking(client *client, payload []byte) bool {
 	if ok := client.enqueueWithTimeout(payload, clientSendTimeout, b.done); ok {
+		b.logDecodedPayload("broker -> client", client.addr, payload, payloadFromRadio)
 		return true
 	}
 	if !b.isPrimary(client) {
@@ -949,6 +1038,7 @@ func (b *protocolBroker) writeSerial(payload []byte) error {
 	b.serialMu.Lock()
 	defer b.serialMu.Unlock()
 
+	b.logDecodedPayload("broker -> serial", "", payload, payloadToRadio)
 	if err := writeFrame(b.serial, payload); err != nil {
 		return errSerialClosed
 	}
