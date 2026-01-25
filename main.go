@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/grandcat/zeroconf"
+	"github.com/skrashevich/go-meshtastic-serial2tcp/termios"
 	"golang.org/x/sys/unix"
 )
 
@@ -275,13 +276,13 @@ func disableHUPCL(device string) error {
 	}
 	defer unix.Close(fd)
 
-	termios, err := getTermios(fd)
+	termiosState, err := termios.GetTermios(fd)
 	if err != nil {
 		return err
 	}
 
-	termios.Cflag &^= unix.HUPCL
-	if err := setTermios(fd, termios); err != nil {
+	termiosState.Cflag &^= unix.HUPCL
+	if err := termios.SetTermios(fd, termiosState); err != nil {
 		return err
 	}
 
@@ -300,22 +301,22 @@ func openSerial(device string, baud int) (*os.File, error) {
 		return nil, err
 	}
 
-	termios, err := getTermios(fd)
+	termiosState, err := termios.GetTermios(fd)
 	if err != nil {
 		unix.Close(fd)
 		return nil, err
 	}
 
-	setRawMode(termios)
-	termios.Cflag |= unix.CLOCAL | unix.CREAD
-	termios.Cflag &^= unix.HUPCL
+	termios.SetRawMode(termiosState)
+	termiosState.Cflag |= unix.CLOCAL | unix.CREAD
+	termiosState.Cflag &^= unix.HUPCL
 
-	if err := setBaudRate(termios, baud); err != nil {
+	if err := termios.SetBaudRate(termiosState, baud); err != nil {
 		unix.Close(fd)
 		return nil, err
 	}
 
-	if err := setTermios(fd, termios); err != nil {
+	if err := termios.SetTermios(fd, termiosState); err != nil {
 		unix.Close(fd)
 		return nil, err
 	}

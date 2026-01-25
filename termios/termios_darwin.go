@@ -1,6 +1,6 @@
 //go:build darwin
 
-package main
+package termios
 
 import (
 	"fmt"
@@ -17,15 +17,15 @@ var baudrateMap = map[int]uint64{
 	230400: unix.B230400,
 }
 
-func getTermios(fd int) (*unix.Termios, error) {
+func GetTermios(fd int) (*unix.Termios, error) {
 	return unix.IoctlGetTermios(fd, unix.TIOCGETA)
 }
 
-func setTermios(fd int, termios *unix.Termios) error {
+func SetTermios(fd int, termios *unix.Termios) error {
 	return unix.IoctlSetTermios(fd, unix.TIOCSETA, termios)
 }
 
-func setBaudRate(termios *unix.Termios, baud int) error {
+func SetBaudRate(termios *unix.Termios, baud int) error {
 	rate, ok := baudrateMap[baud]
 	if !ok {
 		return fmt.Errorf("unsupported baud rate: %d", baud)
@@ -35,7 +35,7 @@ func setBaudRate(termios *unix.Termios, baud int) error {
 	return nil
 }
 
-func setRawMode(termios *unix.Termios) {
+func SetRawMode(termios *unix.Termios) {
 	termios.Iflag &^= unix.IGNBRK | unix.BRKINT | unix.PARMRK | unix.ISTRIP | unix.INLCR | unix.IGNCR | unix.ICRNL | unix.IXON | unix.IXOFF | unix.IXANY | unix.INPCK | unix.IGNPAR
 	termios.Oflag &^= unix.OPOST
 	termios.Lflag &^= unix.ECHO | unix.ECHONL | unix.ICANON | unix.ISIG | unix.IEXTEN
