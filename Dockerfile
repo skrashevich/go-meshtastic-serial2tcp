@@ -29,4 +29,7 @@ ENV SERIAL_DEVICE=/dev/ttyUSB0
 ENV BAUD_RATE=115200
 ENV TCP_PORT=4403
 
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD ["/go-meshtastic-serial2tcp", "--healthcheck"]
+
 ENTRYPOINT ["/go-meshtastic-serial2tcp"]
