@@ -25,8 +25,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/grandcat/zeroconf"
-	meshtasticpb "github.com/skrashevich/go-meshtastic-serial2tcp/internal/meshtastic/meshtastic"
-	"github.com/skrashevich/go-meshtastic-serial2tcp/termios"
+	meshtasticpb "github.com/skrashevich/go-meshtastic-serial2tcp/internal/meshtastic"
+	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/termios"
 	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
