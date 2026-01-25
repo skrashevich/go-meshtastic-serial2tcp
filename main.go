@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/grandcat/zeroconf"
 	meshtasticpb "github.com/skrashevich/go-meshtastic-serial2tcp/internal/meshtastic/meshtastic"
@@ -750,6 +752,9 @@ func (b *protocolBroker) logPayload(direction, addr string, payload []byte, kind
 }
 
 func (b *protocolBroker) logDecodedPayload(direction, addr string, payload []byte, kind payloadKind) {
+	if !b.debug {
+		return
+	}
 	var msg proto.Message
 	switch kind {
 	case payloadFromRadio:
@@ -776,6 +781,12 @@ func (b *protocolBroker) logDecodedPayload(direction, addr string, payload []byt
 		return
 	}
 
+	if decodedPayload, ok := describeMeshPayload(msg); ok {
+		if updated, err := injectDecodedPayloadJSON(data, decodedPayload); err == nil {
+			data = updated
+		}
+	}
+
 	decoded := string(data)
 	truncated := ""
 	if len(decoded) > debugMaxDecoded {
@@ -787,6 +798,169 @@ func (b *protocolBroker) logDecodedPayload(direction, addr string, payload []byt
 		label = fmt.Sprintf("%s [%s]", direction, addr)
 	}
 	log.Printf("%s decoded: %s%s", label, decoded, truncated)
+}
+
+func describeMeshPayload(msg proto.Message) (any, bool) {
+	packet := extractMeshPacket(msg)
+	if packet == nil {
+		return "", false
+	}
+	data := packet.GetDecoded()
+	if data == nil {
+		return "", false
+	}
+	return decodeDataPayload(data)
+}
+
+func extractMeshPacket(msg proto.Message) *meshtasticpb.MeshPacket {
+	switch m := msg.(type) {
+	case *meshtasticpb.FromRadio:
+		return m.GetPacket()
+	case *meshtasticpb.ToRadio:
+		return m.GetPacket()
+	default:
+		return nil
+	}
+}
+
+func decodeDataPayload(data *meshtasticpb.Data) (any, bool) {
+	if data == nil {
+		return nil, false
+	}
+
+	port := data.GetPortnum()
+	payload := data.GetPayload()
+
+	switch port {
+	case meshtasticpb.PortNum_TEXT_MESSAGE_APP,
+		meshtasticpb.PortNum_DETECTION_SENSOR_APP,
+		meshtasticpb.PortNum_ALERT_APP,
+		meshtasticpb.PortNum_REPLY_APP,
+		meshtasticpb.PortNum_RANGE_TEST_APP:
+		return formatTextPayload(payload), true
+	case meshtasticpb.PortNum_TEXT_MESSAGE_COMPRESSED_APP:
+		return formatHexPayload(payload), true
+	case meshtasticpb.PortNum_POSITION_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.Position{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_NODEINFO_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.User{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_ROUTING_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.Routing{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_ADMIN_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.AdminMessage{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_WAYPOINT_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.Waypoint{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_KEY_VERIFICATION_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.KeyVerificationAdmin{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_PAXCOUNTER_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.Paxcount{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_STORE_FORWARD_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.StoreAndForward{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_NODE_STATUS_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.StatusMessage{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_TELEMETRY_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.Telemetry{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_TRACEROUTE_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.RouteDiscovery{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_NEIGHBORINFO_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.NeighborInfo{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_MAP_REPORT_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.MapReport{}, payload); ok {
+			return out, true
+		}
+	case meshtasticpb.PortNum_POWERSTRESS_APP:
+		if out, ok := formatProtoPayload(&meshtasticpb.PowerStressMessage{}, payload); ok {
+			return out, true
+		}
+	}
+
+	if len(payload) == 0 {
+		return "<empty>", true
+	}
+	return formatHexPayload(payload), true
+}
+
+func formatProtoPayload(msg proto.Message, payload []byte) (any, bool) {
+	if len(payload) == 0 {
+		return "<empty>", true
+	}
+	if err := proto.Unmarshal(payload, msg); err != nil {
+		return nil, false
+	}
+	data, err := protojson.MarshalOptions{
+		UseProtoNames: true,
+		Multiline:     false,
+	}.Marshal(msg)
+	if err != nil {
+		return nil, false
+	}
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return string(data), true
+	}
+	return decoded, true
+}
+
+func formatTextPayload(payload []byte) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	if !utf8.Valid(payload) {
+		return formatHexPayload(payload)
+	}
+	return string(payload)
+}
+
+func formatHexPayload(payload []byte) string {
+	if len(payload) == 0 {
+		return "0x"
+	}
+	return "0x" + hex.EncodeToString(payload)
+}
+
+func injectDecodedPayloadJSON(data []byte, decoded any) ([]byte, error) {
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, err
+	}
+	packet, ok := root["packet"].(map[string]any)
+	if !ok {
+		return data, nil
+	}
+	decodedMap, ok := packet["decoded"].(map[string]any)
+	if !ok {
+		return data, nil
+	}
+	decodedMap["payload_decoded"] = decoded
+	updated, err := json.Marshal(root)
+	if err != nil {
+		return data, nil
+	}
+	return updated, nil
 }
 
 func (b *protocolBroker) readSerial(errCh chan<- error) {
