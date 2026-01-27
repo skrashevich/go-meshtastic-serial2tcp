@@ -26,8 +26,7 @@ import (
 
 	"github.com/grandcat/zeroconf"
 	meshtasticpb "github.com/skrashevich/go-meshtastic-serial2tcp/internal/meshtastic"
-	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/termios"
-	"golang.org/x/sys/unix"
+
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -348,72 +347,6 @@ func waitForDevice(ctx context.Context, device string) error {
 			}
 		}
 	}
-}
-
-func deviceExists(device string) bool {
-	_, err := os.Stat(device)
-	return err == nil
-}
-
-func disableHUPCL(device string) error {
-	fd, err := unix.Open(device, unix.O_RDWR|unix.O_NOCTTY, 0)
-	if err != nil {
-		return err
-	}
-	defer unix.Close(fd)
-
-	termiosState, err := termios.GetTermios(fd)
-	if err != nil {
-		return err
-	}
-
-	termiosState.Cflag &^= unix.HUPCL
-	if err := termios.SetTermios(fd, termiosState); err != nil {
-		return err
-	}
-
-	log.Printf("HUPCL disabled")
-	return nil
-}
-
-func openSerial(device string, baud int) (*os.File, error) {
-	fd, err := unix.Open(device, unix.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := unix.SetNonblock(fd, false); err != nil {
-		unix.Close(fd)
-		return nil, err
-	}
-
-	termiosState, err := termios.GetTermios(fd)
-	if err != nil {
-		unix.Close(fd)
-		return nil, err
-	}
-
-	termios.SetRawMode(termiosState)
-	termiosState.Cflag |= unix.CLOCAL | unix.CREAD
-	termiosState.Cflag &^= unix.HUPCL
-
-	if err := termios.SetBaudRate(termiosState, baud); err != nil {
-		unix.Close(fd)
-		return nil, err
-	}
-
-	if err := termios.SetTermios(fd, termiosState); err != nil {
-		unix.Close(fd)
-		return nil, err
-	}
-
-	file := os.NewFile(uintptr(fd), device)
-	if file == nil {
-		unix.Close(fd)
-		return nil, errors.New("failed to open serial device")
-	}
-
-	return file, nil
 }
 
 func readFrame(r *bufio.Reader) ([]byte, error) {
