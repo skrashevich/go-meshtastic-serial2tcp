@@ -1,0 +1,15 @@
+services:
+  meshtastic-serial2tcp:
+    image: ghcr.io/skrashevich/go-meshtastic-serial2tcp:latest
+    container_name: meshtastic-serial2tcp
+    restart: unless-stopped
+    environment:
+      SERIAL_DEVICE: /dev/ttyUSB0
+      BAUD_RATE: "115200"
+      TCP_PORT: "4403"
+    # Expose the TCP bridge to the host
+    ports:
+      - "4403:4403/tcp"
+    privileged: true
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0

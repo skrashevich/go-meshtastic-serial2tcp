@@ -4,7 +4,7 @@ Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and
 
 ## Requirements
 
-- Go 1.24+ (for building from source)
+- Go 1.25+ (for building from source)
 - Access to the serial device (for example `/dev/ttyUSB0` on Linux or `/dev/tty.usb*` on macOS)
 
 ## Install and run (local)
@@ -48,6 +48,26 @@ docker run --rm \
   -e BAUD_RATE=115200 \
   -e TCP_PORT=4403 \
   ghcr.io/skrashevich/go-meshtastic-serial2tcp:latest
+```
+
+Using docker-compose:
+
+```yaml
+services:
+  meshtastic-serial2tcp:
+    image: ghcr.io/skrashevich/go-meshtastic-serial2tcp:latest
+    container_name: meshtastic-serial2tcp
+    restart: unless-stopped
+    environment:
+      SERIAL_DEVICE: /dev/ttyUSB0
+      BAUD_RATE: "115200"
+      TCP_PORT: "4403"
+    # Expose the TCP bridge to the host
+    ports:
+      - "4403:4403/tcp"
+    privileged: true
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
 ```
 
 Notes:
