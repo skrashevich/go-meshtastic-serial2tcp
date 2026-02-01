@@ -93,17 +93,17 @@ func (c *client) enqueueWithTimeout(payload []byte, timeout time.Duration, done 
 		c.mu.Unlock()
 		return false
 	}
+	sendChan := c.send
+	c.mu.Unlock()
+
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case <-done:
-		c.mu.Unlock()
 		return false
-	case c.send <- payload:
-		c.mu.Unlock()
+	case sendChan <- payload:
 		return true
 	case <-timer.C:
-		c.mu.Unlock()
 		return false
 	}
 }

@@ -4,8 +4,17 @@ Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and
 
 ## Requirements
 
-- Go 1.25+ (for building from source)
+### Runtime
 - Access to the serial device (for example `/dev/ttyUSB0` on Linux or `/dev/tty.usb*` on macOS)
+
+### Building from source
+- Go 1.25+
+- Git (to clone the repository with submodules)
+
+### Development (optional, for regenerating protobuf files)
+- `protoc` - Protocol Buffers compiler
+- `protoc-gen-go` v1.36.11+ - Go protobuf code generator
+- `make` - GNU Make (for using Makefile commands)
 
 ## Install and run (local)
 
@@ -99,4 +108,86 @@ Debug logging:
 
 ## mDNS discovery
 
-When enabled, the service advertises `_meshtastic._tcp.local.` with details about the serial device and baud rate. If mDNS is not needed or doesn’t work in your environment, disable it with `MDNS_ENABLED=false` or `--mdns=false`.
+When enabled, the service advertises `_meshtastic._tcp.local.` with details about the serial device and baud rate. If mDNS is not needed or doesn't work in your environment, disable it with `MDNS_ENABLED=false` or `--mdns=false`.
+
+## Development
+
+### Building from source
+
+Clone the repository with submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/skrashevich/go-meshtastic-serial2tcp.git
+cd go-meshtastic-serial2tcp
+```
+
+If you already cloned without submodules, initialize them:
+
+```bash
+git submodule update --init --recursive
+```
+
+Build the project:
+
+```bash
+go build -o go-meshtastic-serial2tcp .
+```
+
+Or using Makefile:
+
+```bash
+make build
+```
+
+### Protobuf generation
+
+The project uses Protocol Buffers definitions from the official [Meshtastic protobufs](https://github.com/meshtastic/protobufs) repository (included as a git submodule in [protobufs/](protobufs/)).
+
+#### Requirements
+
+- `protoc` (Protocol Buffers compiler) - [Installation guide](https://grpc.io/docs/protoc-installation/)
+- `protoc-gen-go` v1.36.11 or later:
+  ```bash
+  go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+  ```
+
+#### Regenerating protobuf files
+
+Using Makefile (recommended):
+
+```bash
+# Check tools and versions
+make tools-check
+
+# Regenerate all protobuf files
+make proto
+
+# Update protobufs submodule to latest version
+make proto-update
+
+# Clean generated files
+make proto-clean
+
+# See all available commands
+make help
+```
+
+Manual generation:
+
+```bash
+# Create temporary directory for generation
+mkdir -p github.com/meshtastic/go/generated
+
+# Generate from proto files
+protoc \
+  --proto_path=protobufs \
+  --go_out=. \
+  protobufs/meshtastic/*.proto protobufs/nanopb.proto
+
+# Move generated files to the correct location
+mkdir -p internal/meshtastic
+mv github.com/meshtastic/go/generated/*.pb.go internal/meshtastic/
+rm -rf github.com
+```
+
+The generated files use `package generated` and are placed in [internal/meshtastic/](internal/meshtastic/).
