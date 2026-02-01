@@ -1,4 +1,4 @@
-package main
+package broker
 
 import (
 	"bufio"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/frame"
 	meshtasticpb "github.com/skrashevich/go-meshtastic-serial2tcp/internal/meshtastic"
 	"google.golang.org/protobuf/proto"
 )
@@ -40,7 +41,7 @@ func TestProtocolBrokerWantConfigPrimaryForwardsAndTracks(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := newProtocolBroker(serialW, false, false)
+	broker := New(serialW, false, false)
 	client, peer := newTestClient()
 	defer peer.Close()
 	defer client.conn.Close()
@@ -54,9 +55,9 @@ func TestProtocolBrokerWantConfigPrimaryForwardsAndTracks(t *testing.T) {
 
 	broker.handleClientPayload(client, payload)
 
-	out, err := readFrame(bufio.NewReader(serialR))
+	out, err := frame.ReadFrame(bufio.NewReader(serialR))
 	if err != nil {
-		t.Fatalf("readFrame: %v", err)
+		t.Fatalf("ReadFrame: %v", err)
 	}
 	outMsg := &meshtasticpb.ToRadio{}
 	if err := proto.Unmarshal(out, outMsg); err != nil {
@@ -87,7 +88,7 @@ func TestProtocolBrokerWantConfigReadOnlyUsesCache(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := newProtocolBroker(serialW, true, false)
+	broker := New(serialW, true, false)
 	primary, primaryPeer := newTestClient()
 	defer primaryPeer.Close()
 	defer primary.conn.Close()
@@ -136,7 +137,7 @@ func TestProtocolBrokerHandleConfigCompleteRewrites(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := newProtocolBroker(serialW, false, false)
+	broker := New(serialW, false, false)
 	client, peer := newTestClient()
 	defer peer.Close()
 	defer client.conn.Close()
@@ -167,7 +168,7 @@ func TestProtocolBrokerRemoveClientPromotesPrimary(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := newProtocolBroker(serialW, true, false)
+	broker := New(serialW, true, false)
 	primary, primaryPeer := newTestClient()
 	defer primaryPeer.Close()
 	secondary, secondaryPeer := newTestClient()

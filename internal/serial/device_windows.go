@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package serial
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func deviceExists(device string) bool {
+func DeviceExists(device string) bool {
 	_, name := normalizeWindowsDevice(device)
 	if isCOMDevice(name) {
 		return queryDosDevice(name)

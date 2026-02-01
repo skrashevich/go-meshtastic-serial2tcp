@@ -1,10 +1,10 @@
 //go:build !windows
 
-package main
+package serial
 
 import "os"
 
-func deviceExists(device string) bool {
+func DeviceExists(device string) bool {
 	_, err := os.Stat(device)
 	return err == nil
 }

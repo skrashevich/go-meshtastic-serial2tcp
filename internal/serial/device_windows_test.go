@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package serial
 
 import (
 	"os"
@@ -57,12 +57,12 @@ func TestDeviceExistsWindowsFile(t *testing.T) {
 		t.Fatalf("write temp file: %v", err)
 	}
 
-	if !deviceExists(path) {
-		t.Fatalf("expected deviceExists(%q) to be true", path)
+	if !DeviceExists(path) {
+		t.Fatalf("expected DeviceExists(%q) to be true", path)
 	}
 
-	if deviceExists(filepath.Join(dir, "missing")) {
-		t.Fatalf("expected deviceExists for missing path to be false")
+	if DeviceExists(filepath.Join(dir, "missing")) {
+		t.Fatalf("expected DeviceExists for missing path to be false")
 	}
 }
 
@@ -78,7 +78,7 @@ func TestDeviceExistsWindowsCOMUsesQuery(t *testing.T) {
 		return 8, nil
 	}
 
-	if !deviceExists("COM9") {
+	if !DeviceExists("COM9") {
 		t.Fatalf("expected COM device to exist via QueryDosDevice")
 	}
 	if callCount == 0 {
@@ -101,7 +101,7 @@ func TestDeviceExistsWindowsCOMRetriesOnBuffer(t *testing.T) {
 		return 12, nil
 	}
 
-	if !deviceExists("COM10") {
+	if !DeviceExists("COM10") {
 		t.Fatalf("expected COM device to exist after buffer retry")
 	}
 	if callCount < 2 {

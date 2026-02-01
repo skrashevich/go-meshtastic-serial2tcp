@@ -1,6 +1,6 @@
 //go:build !windows
 
-package main
+package serial
 
 import (
 	"os"
@@ -15,11 +15,11 @@ func TestDeviceExistsUnix(t *testing.T) {
 		t.Fatalf("write temp file: %v", err)
 	}
 
-	if !deviceExists(path) {
-		t.Fatalf("expected deviceExists(%q) to be true", path)
+	if !DeviceExists(path) {
+		t.Fatalf("expected DeviceExists(%q) to be true", path)
 	}
 
-	if deviceExists(filepath.Join(dir, "missing")) {
-		t.Fatalf("expected deviceExists for missing path to be false")
+	if DeviceExists(filepath.Join(dir, "missing")) {
+		t.Fatalf("expected DeviceExists for missing path to be false")
 	}
 }

@@ -1,6 +1,6 @@
 //go:build !windows
 
-package main
+package serial
 
 import (
 	"errors"
@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func disableHUPCL(device string) error {
+func DisableHUPCL(device string) error {
 	fd, err := unix.Open(device, unix.O_RDWR|unix.O_NOCTTY, 0)
 	if err != nil {
 		return err
@@ -32,7 +32,7 @@ func disableHUPCL(device string) error {
 	return nil
 }
 
-func openSerial(device string, baud int) (*os.File, error) {
+func Open(device string, baud int) (*os.File, error) {
 	fd, err := unix.Open(device, unix.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err

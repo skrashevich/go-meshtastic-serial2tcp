@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package serial
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func disableHUPCL(device string) error {
+func DisableHUPCL(device string) error {
 	return nil
 }
 
@@ -19,7 +19,7 @@ var (
 	closeHandle = windows.CloseHandle
 )
 
-func openSerial(device string, baud int) (*os.File, error) {
+func Open(device string, baud int) (*os.File, error) {
 	path, _ := normalizeWindowsDevice(device)
 	handle, err := createFile(
 		windows.StringToUTF16Ptr(path),

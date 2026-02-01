@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package serial
 
 import (
 	"errors"
@@ -29,14 +29,14 @@ func TestOpenSerialUsesNormalizedPath(t *testing.T) {
 		return nil
 	}
 
-	_, err := openSerial("COM3", 115200)
+	_, err := Open("COM3", 115200)
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("expected createFile error, got %v", err)
 	}
 }
 
 func TestDisableHUPCLWindowsNoop(t *testing.T) {
-	if err := disableHUPCL("COM1"); err != nil {
+	if err := DisableHUPCL("COM1"); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 }
