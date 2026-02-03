@@ -683,6 +683,29 @@ func (b *Broker) handleClientPayload(client *client, payload []byte) {
 		}
 		b.removeClient(client)
 		return
+	case *meshtasticpb.ToRadio_Packet:
+		if b.isPrimary(client) {
+			// Отправляем пакет в радио
+			if err := b.forwardToSerial(toRadio); err != nil {
+				b.fail(err)
+				return
+			}
+			// Создаем FromRadio для broadcast другим клиентам
+			fromRadio := &meshtasticpb.FromRadio{
+				PayloadVariant: &meshtasticpb.FromRadio_Packet{
+					Packet: v.Packet,
+				},
+			}
+			broadcastPayload, err := proto.Marshal(fromRadio)
+			if err != nil {
+				log.Printf("Warning: failed to marshal packet for broadcast: %v", err)
+				return
+			}
+			// Broadcast всем клиентам, чтобы они видели исходящее сообщение
+			b.broadcast(broadcastPayload)
+		} else if client.markReadOnlyWarning() {
+			log.Printf("Ignoring packet from read-only client: %s", client.addr)
+		}
 	default:
 		if b.isPrimary(client) {
 			if err := b.forwardToSerial(toRadio); err != nil {
