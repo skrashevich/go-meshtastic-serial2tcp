@@ -1,11 +1,11 @@
 name: build-and-push
 
+# Builds the rolling dev image from `main`.
+# Tagged releases (v*) are handled by release.yml.
 on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -42,10 +42,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=tag
             type=ref,event=branch
             type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=edge,branch=main
 
       - name: Build and push
         uses: docker/build-push-action@v6
