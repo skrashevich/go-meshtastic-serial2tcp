@@ -61,6 +61,9 @@ func TestReadFrameInvalidLength(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid length")
 	}
+	if !errors.Is(err, ErrInvalidFrame) {
+		t.Fatalf("expected ErrInvalidFrame, got %v", err)
+	}
 }
 
 func TestWriteFrameTooLarge(t *testing.T) {

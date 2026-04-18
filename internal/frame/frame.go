@@ -3,6 +3,7 @@ package frame
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 )
@@ -12,6 +13,11 @@ const (
 	Magic1  = 0xC3
 	MaxSize = 64*1024 - 1
 )
+
+// ErrInvalidFrame signals a recoverable parse error: magic bytes were found
+// but the length field is out of range. The reader may skip and resync on
+// the next magic byte pair instead of closing the underlying connection.
+var ErrInvalidFrame = errors.New("invalid frame")
 
 func ReadFrame(r *bufio.Reader) ([]byte, error) {
 	for {
@@ -38,11 +44,7 @@ func ReadFrame(r *bufio.Reader) ([]byte, error) {
 
 		length := binary.BigEndian.Uint16(lenBuf[:])
 		if length == 0 || length > MaxSize {
-			lengthLE := binary.LittleEndian.Uint16(lenBuf[:])
-			if lengthLE == 0 || lengthLE > MaxSize {
-				return nil, fmt.Errorf("invalid frame length: %d", length)
-			}
-			length = lengthLE
+			return nil, fmt.Errorf("%w: length=%d", ErrInvalidFrame, length)
 		}
 
 		payload := make([]byte, length)

@@ -1,6 +1,6 @@
 module github.com/skrashevich/go-meshtastic-serial2tcp
 
-go 1.25
+go 1.26
 
 require (
 	github.com/grandcat/zeroconf v1.0.0

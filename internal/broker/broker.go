@@ -12,7 +12,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"sort"
 	"sync"
 	"time"
@@ -27,7 +26,6 @@ import (
 const (
 	clientSendBuffer  = 64
 	clientSendTimeout = 5 * time.Second
-	debugMaxBytes     = 256
 	debugMaxDecoded   = 2048
 )
 
@@ -44,32 +42,76 @@ const (
 )
 
 type client struct {
-	conn           net.Conn
-	send           chan []byte
-	addr           string
+	conn net.Conn
+	send chan []byte
+	done chan struct{}
+	addr string
+
+	warnMu         sync.Mutex
 	warnedReadOnly bool
 	warnedSlow     bool
-	closed         bool
-	mu             sync.Mutex
+
+	closeOnce sync.Once
 }
 
-func (c *client) enqueue(payload []byte) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return false
+func newClient(conn net.Conn) *client {
+	return &client{
+		conn: conn,
+		send: make(chan []byte, clientSendBuffer),
+		done: make(chan struct{}),
+		addr: conn.RemoteAddr().String(),
 	}
+}
+
+func (c *client) isClosed() bool {
 	select {
-	case c.send <- payload:
+	case <-c.done:
 		return true
 	default:
 		return false
 	}
 }
 
+// enqueue does a non-blocking send. It never closes the send channel so the
+// caller never races with close(); instead, shutdown is signalled via c.done.
+// Returns false if the client is closed or the send buffer is full.
+func (c *client) enqueue(payload []byte) bool {
+	select {
+	case <-c.done:
+		return false
+	default:
+	}
+	select {
+	case c.send <- payload:
+		return true
+	case <-c.done:
+		return false
+	default:
+		return false
+	}
+}
+
+// enqueueWithTimeout blocks up to the given timeout waiting for buffer space,
+// while still respecting client shutdown (c.done) and broker shutdown.
+// Because c.send is never closed, a send into it cannot panic.
+func (c *client) enqueueWithTimeout(payload []byte, timeout time.Duration, brokerDone <-chan struct{}) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case c.send <- payload:
+		return true
+	case <-c.done:
+		return false
+	case <-brokerDone:
+		return false
+	case <-timer.C:
+		return false
+	}
+}
+
 func (c *client) markReadOnlyWarning() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.warnMu.Lock()
+	defer c.warnMu.Unlock()
 	if c.warnedReadOnly {
 		return false
 	}
@@ -78,8 +120,8 @@ func (c *client) markReadOnlyWarning() bool {
 }
 
 func (c *client) markSlowWarning() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.warnMu.Lock()
+	defer c.warnMu.Unlock()
 	if c.warnedSlow {
 		return false
 	}
@@ -87,37 +129,11 @@ func (c *client) markSlowWarning() bool {
 	return true
 }
 
-func (c *client) enqueueWithTimeout(payload []byte, timeout time.Duration, done <-chan struct{}) bool {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return false
-	}
-	sendChan := c.send
-	c.mu.Unlock()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-done:
-		return false
-	case sendChan <- payload:
-		return true
-	case <-timer.C:
-		return false
-	}
-}
-
 func (c *client) close() {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return
-	}
-	c.closed = true
-	close(c.send)
-	c.mu.Unlock()
-	_ = c.conn.Close()
+	c.closeOnce.Do(func() {
+		close(c.done)
+		_ = c.conn.Close()
+	})
 }
 
 type configCache struct {
@@ -245,7 +261,11 @@ type configRequest struct {
 }
 
 type Broker struct {
-	serial          *os.File
+	// serial is the device-side endpoint. The concrete type is usually
+	// *os.File opened by the serial package, but any io.ReadWriter works —
+	// this keeps the broker testable with an in-memory net.Pipe or similar
+	// bidirectional plumbing.
+	serial          io.ReadWriter
 	serialMu        sync.Mutex
 	clients         map[*client]struct{}
 	clientsMu       sync.RWMutex
@@ -262,7 +282,7 @@ type Broker struct {
 	err     error
 }
 
-func New(serial *os.File, readOnlyClients bool, debug bool) *Broker {
+func New(serial io.ReadWriter, readOnlyClients bool, debug bool) *Broker {
 	return &Broker{
 		serial:          serial,
 		clients:         make(map[*client]struct{}),
@@ -297,29 +317,6 @@ func (b *Broker) fail(err error) {
 		b.err = err
 		close(b.done)
 	})
-}
-
-func (b *Broker) logPayload(direction, addr string, payload []byte, kind payloadKind) {
-	if !b.debug {
-		return
-	}
-	label := direction
-	if addr != "" {
-		label = fmt.Sprintf("%s [%s]", direction, addr)
-	}
-	limit := payload
-	truncated := ""
-	if len(payload) > debugMaxBytes {
-		limit = payload[:debugMaxBytes]
-		truncated = fmt.Sprintf(" ...(truncated %d bytes)", len(payload)-debugMaxBytes)
-	}
-	hexPayload := hex.EncodeToString(limit)
-	if len(payload) == 0 {
-		log.Printf("%s (0 bytes)", label)
-		return
-	}
-	log.Printf("%s (%d bytes): %s%s", label, len(payload), hexPayload, truncated)
-	//b.logDecodedPayload(direction, addr, payload, kind)
 }
 
 func (b *Broker) logDecodedPayload(direction, addr string, payload []byte, kind payloadKind) {
@@ -545,18 +542,28 @@ func (b *Broker) readSerial(errCh chan<- error) {
 
 		payload, err := frame.ReadFrame(reader)
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				errCh <- ErrSerialClosed
-				return
+			if errors.Is(err, frame.ErrInvalidFrame) {
+				// Transient serial glitches (bit flips, partially-received
+				// frames after reconnect) should not tear down the broker.
+				// Log once and keep scanning for the next magic prefix.
+				log.Printf("Warning: %v; resyncing serial stream", err)
+				continue
 			}
-			errCh <- err
+			// Any read error on the serial link means the device is gone —
+			// io.EOF for real TTY closures, net.ErrClosed for net.Pipe in
+			// tests, and *os.PathError wrapping either for explicit Close().
+			// Normalize to ErrSerialClosed so the server loop can distinguish
+			// "serial died, reconnect" from "broker aborted by ctx".
+			errCh <- ErrSerialClosed
 			return
 		}
 		b.logDecodedPayload("serial -> broker", "", payload, payloadFromRadio)
 
 		msg := &meshtasticpb.FromRadio{}
 		if err := proto.Unmarshal(payload, msg); err != nil {
-			b.broadcast(payload)
+			// Unparseable protobuf is likely corruption; drop instead of
+			// broadcasting garbage to clients that may reject or misrender it.
+			log.Printf("Warning: failed to decode FromRadio (%d bytes): %v", len(payload), err)
 			continue
 		}
 
@@ -581,7 +588,12 @@ func (b *Broker) routeFromRadio(frame *meshtasticpb.FromRadio, payload []byte) b
 func (b *Broker) handleConfigComplete(id uint32, payload []byte) {
 	req := b.takeConfigRequest(id)
 	if req.client == nil {
-		b.broadcast(payload)
+		// Either the requesting client disconnected after we sent its
+		// WantConfigId, or this is a spurious ConfigCompleteId. Broadcasting
+		// it would deliver a complete-id that no remaining client actually
+		// asked for (the id in the payload is our rewritten random one, not
+		// any client's original). Drop silently.
+		log.Printf("Dropping ConfigCompleteId without pending request: id=%d", id)
 		return
 	}
 
@@ -598,46 +610,40 @@ func (b *Broker) handleConfigComplete(id uint32, payload []byte) {
 }
 
 func (b *Broker) AddClient(conn net.Conn) {
-	client := &client{
-		conn: conn,
-		send: make(chan []byte, clientSendBuffer),
-		addr: conn.RemoteAddr().String(),
-	}
+	cl := newClient(conn)
 
 	b.clientsMu.Lock()
-	b.clients[client] = struct{}{}
+	b.clients[cl] = struct{}{}
 	makePrimary := false
-	readOnly := false
-	if b.readOnlyClients {
-		if b.primary == nil {
-			b.primary = client
-			makePrimary = true
-		} else {
-			readOnly = true
-		}
+	if b.primary == nil {
+		b.primary = cl
+		makePrimary = true
 	}
 	b.clientsMu.Unlock()
 
 	switch {
 	case makePrimary:
-		log.Printf("Client connected (primary): %s", client.addr)
-	case readOnly:
-		log.Printf("Client connected (read-only): %s", client.addr)
+		log.Printf("Client connected (primary): %s", cl.addr)
+	case b.readOnlyClients:
+		log.Printf("Client connected (read-only secondary): %s", cl.addr)
 	default:
-		log.Printf("Client connected (read-write): %s", client.addr)
+		log.Printf("Client connected (secondary): %s", cl.addr)
 	}
 
-	go b.writeLoop(client)
-	go b.readLoop(client)
+	go b.writeLoop(cl)
+	go b.readLoop(cl)
 }
 
-func (b *Broker) isPrimary(client *client) bool {
-	if !b.readOnlyClients {
-		return true
-	}
+// isPrimary reports whether the given client currently owns the radio session.
+// The primary client is the first one to connect (promotion on disconnect is
+// automatic); it is the only client whose WantConfigId is forwarded to the
+// radio and whose Disconnect is propagated to the radio. Secondary clients
+// receive cached config responses and — when readOnlyClients is false — may
+// still send packets, which are also forwarded on their behalf.
+func (b *Broker) isPrimary(cl *client) bool {
 	b.clientsMu.RLock()
 	defer b.clientsMu.RUnlock()
-	return b.primary == client
+	return b.primary == cl
 }
 
 func (b *Broker) readLoop(client *client) {
@@ -653,12 +659,17 @@ func (b *Broker) readLoop(client *client) {
 	}
 }
 
-func (b *Broker) handleClientPayload(client *client, payload []byte) {
+func (b *Broker) handleClientPayload(cl *client, payload []byte) {
+	primary := b.isPrimary(cl)
+
 	toRadio := &meshtasticpb.ToRadio{}
 	if err := proto.Unmarshal(payload, toRadio); err != nil {
-		if b.isPrimary(client) {
-			if err := b.writeSerial(payload); err != nil {
-				b.fail(err)
+		// Unparseable payload: only the primary is allowed to pass raw bytes
+		// through to the radio. Secondary clients are ignored to avoid
+		// corrupting the serial stream.
+		if primary {
+			if serialErr := b.writeSerial(payload); serialErr != nil {
+				b.fail(serialErr)
 			}
 		}
 		return
@@ -666,31 +677,40 @@ func (b *Broker) handleClientPayload(client *client, payload []byte) {
 
 	switch v := toRadio.GetPayloadVariant().(type) {
 	case *meshtasticpb.ToRadio_WantConfigId:
-		if b.isPrimary(client) {
-			newID := b.reserveConfigRequest(client, v.WantConfigId)
+		// WantConfigId is always cache-served for non-primary clients so that
+		// every client sees a fresh hand-shake without hammering the radio
+		// with duplicate config dumps (and without broadcasting those dumps
+		// to peers that already have the state).
+		if primary {
+			newID := b.reserveConfigRequest(cl, v.WantConfigId)
 			v.WantConfigId = newID
 			if err := b.forwardToSerial(toRadio); err != nil {
 				b.fail(err)
 			}
 		} else {
-			b.sendCachedConfig(client, v.WantConfigId)
+			b.sendCachedConfig(cl, v.WantConfigId)
 		}
 	case *meshtasticpb.ToRadio_Disconnect:
-		if b.isPrimary(client) {
+		// Only the primary owns the radio session; forwarding a secondary
+		// disconnect would tell the radio the app is gone while other clients
+		// are still attached.
+		if primary {
 			if err := b.forwardToSerial(toRadio); err != nil {
 				b.fail(err)
 			}
 		}
-		b.removeClient(client)
+		b.removeClient(cl)
 		return
 	case *meshtasticpb.ToRadio_Packet:
-		if b.isPrimary(client) {
-			// Отправляем пакет в радио
+		if primary || !b.readOnlyClients {
 			if err := b.forwardToSerial(toRadio); err != nil {
 				b.fail(err)
 				return
 			}
-			// Создаем FromRadio для broadcast другим клиентам
+			// Echo the outgoing packet to the other clients as a FromRadio
+			// so their UI stays in sync with what was transmitted. The
+			// sender is excluded to avoid a loopback the app would render
+			// as a duplicate message.
 			fromRadio := &meshtasticpb.FromRadio{
 				PayloadVariant: &meshtasticpb.FromRadio_Packet{
 					Packet: v.Packet,
@@ -701,39 +721,37 @@ func (b *Broker) handleClientPayload(client *client, payload []byte) {
 				log.Printf("Warning: failed to marshal packet for broadcast: %v", err)
 				return
 			}
-			// Broadcast всем клиентам, чтобы они видели исходящее сообщение
-			b.broadcast(broadcastPayload)
-		} else if client.markReadOnlyWarning() {
-			log.Printf("Ignoring packet from read-only client: %s", client.addr)
+			b.broadcastExcept(broadcastPayload, cl)
+		} else if cl.markReadOnlyWarning() {
+			log.Printf("Ignoring packet from read-only client: %s", cl.addr)
 		}
 	default:
-		if b.isPrimary(client) {
+		if primary || !b.readOnlyClients {
 			if err := b.forwardToSerial(toRadio); err != nil {
 				b.fail(err)
 			}
-		} else if client.markReadOnlyWarning() {
-			log.Printf("Ignoring request from read-only client: %s", client.addr)
+		} else if cl.markReadOnlyWarning() {
+			log.Printf("Ignoring request from read-only client: %s", cl.addr)
 		}
 	}
 }
 
-func (b *Broker) writeLoop(client *client) {
-	writer := bufio.NewWriter(client.conn)
+func (b *Broker) writeLoop(cl *client) {
+	writer := bufio.NewWriter(cl.conn)
 	for {
 		select {
 		case <-b.done:
-			b.removeClient(client)
+			b.removeClient(cl)
 			return
-		case payload, ok := <-client.send:
-			if !ok {
-				return
-			}
+		case <-cl.done:
+			return
+		case payload := <-cl.send:
 			if err := frame.WriteFrame(writer, payload); err != nil {
-				b.removeClient(client)
+				b.removeClient(cl)
 				return
 			}
 			if err := writer.Flush(); err != nil {
-				b.removeClient(client)
+				b.removeClient(cl)
 				return
 			}
 		}
@@ -741,40 +759,55 @@ func (b *Broker) writeLoop(client *client) {
 }
 
 func (b *Broker) broadcast(payload []byte) {
+	b.broadcastExcept(payload, nil)
+}
+
+// broadcastExcept delivers payload to every client except the one given.
+// A nil except sends to all clients.
+func (b *Broker) broadcastExcept(payload []byte, except *client) {
 	clients := b.snapshotClients()
-	for _, client := range clients {
-		b.sendToClient(client, payload)
-	}
-}
-
-func (b *Broker) sendToClient(client *client, payload []byte) {
-	if ok := client.enqueue(payload); ok {
-		b.logDecodedPayload("broker -> client", client.addr, payload, payloadFromRadio)
-		return
-	}
-	if !b.isPrimary(client) {
-		if client.markSlowWarning() {
-			log.Printf("Client send buffer full; dropping frames: %s", client.addr)
+	for _, cl := range clients {
+		if cl == except {
+			continue
 		}
-		return
+		b.sendToClient(cl, payload)
 	}
-	log.Printf("Client too slow, disconnecting: %s", client.addr)
-	b.removeClient(client)
 }
 
-func (b *Broker) sendToClientBlocking(client *client, payload []byte) bool {
-	if ok := client.enqueueWithTimeout(payload, clientSendTimeout, b.done); ok {
-		b.logDecodedPayload("broker -> client", client.addr, payload, payloadFromRadio)
+// sendToClient enqueues payload for the client without blocking. A full
+// buffer is treated as terminal for all clients: the client is disconnected
+// so the app can reconnect and resync from cache. Silent frame-dropping is
+// avoided because it leaves the client's state quietly out of sync with the
+// radio.
+func (b *Broker) sendToClient(cl *client, payload []byte) {
+	if ok := cl.enqueue(payload); ok {
+		b.logDecodedPayload("broker -> client", cl.addr, payload, payloadFromRadio)
+		return
+	}
+	if cl.isClosed() {
+		return
+	}
+	if cl.markSlowWarning() {
+		log.Printf("Client too slow, disconnecting: %s", cl.addr)
+	}
+	b.removeClient(cl)
+}
+
+// sendToClientBlocking enqueues payload with a per-message timeout. It is
+// used when replaying cached config so a momentarily busy client does not
+// cause instant disconnect, but a persistently stuck client is still dropped.
+func (b *Broker) sendToClientBlocking(cl *client, payload []byte) bool {
+	if ok := cl.enqueueWithTimeout(payload, clientSendTimeout, b.done); ok {
+		b.logDecodedPayload("broker -> client", cl.addr, payload, payloadFromRadio)
 		return true
 	}
-	if !b.isPrimary(client) {
-		if client.markSlowWarning() {
-			log.Printf("Client send buffer full; dropping frames: %s", client.addr)
-		}
+	if cl.isClosed() {
 		return false
 	}
-	log.Printf("Client too slow, disconnecting: %s", client.addr)
-	b.removeClient(client)
+	if cl.markSlowWarning() {
+		log.Printf("Client too slow, disconnecting: %s", cl.addr)
+	}
+	b.removeClient(cl)
 	return false
 }
 
@@ -825,15 +858,17 @@ func (b *Broker) removeClient(cl *client) {
 		delete(b.clients, cl)
 		removed = true
 	}
-	if b.readOnlyClients {
-		if b.primary == cl {
-			wasPrimary = true
-			b.primary = nil
-			for candidate := range b.clients {
-				b.primary = candidate
-				newPrimary = candidate
-				break
-			}
+	// Primary is tracked unconditionally; when it leaves, promote any
+	// remaining client so the radio keeps a responsible owner. Without this
+	// a subsequent WantConfigId from a "secondary" would never reach the
+	// radio and the bridge would effectively freeze.
+	if b.primary == cl {
+		wasPrimary = true
+		b.primary = nil
+		for candidate := range b.clients {
+			b.primary = candidate
+			newPrimary = candidate
+			break
 		}
 	}
 	b.clientsMu.Unlock()

@@ -14,11 +14,8 @@ import (
 
 func newTestClient() (*client, net.Conn) {
 	c1, c2 := net.Pipe()
-	cl := &client{
-		conn: c1,
-		send: make(chan []byte, clientSendBuffer),
-		addr: "test-client",
-	}
+	cl := newClient(c1)
+	cl.addr = "test-client"
 	return cl, c2
 }
 
@@ -45,6 +42,11 @@ func TestProtocolBrokerWantConfigPrimaryForwardsAndTracks(t *testing.T) {
 	client, peer := newTestClient()
 	defer peer.Close()
 	defer client.conn.Close()
+
+	broker.clientsMu.Lock()
+	broker.clients[client] = struct{}{}
+	broker.primary = client
+	broker.clientsMu.Unlock()
 
 	wantID := uint32(42)
 	toRadio := &meshtasticpb.ToRadio{PayloadVariant: &meshtasticpb.ToRadio_WantConfigId{WantConfigId: wantID}}
@@ -190,7 +192,7 @@ func TestProtocolBrokerRemoveClientPromotesPrimary(t *testing.T) {
 	}
 }
 
-func TestProtocolBrokerPacketBroadcastToAllClients(t *testing.T) {
+func TestProtocolBrokerPacketBroadcastExcludesSender(t *testing.T) {
 	serialR, serialW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
@@ -199,38 +201,34 @@ func TestProtocolBrokerPacketBroadcastToAllClients(t *testing.T) {
 	defer serialW.Close()
 
 	broker := New(serialW, false, false)
-	client1, peer1 := newTestClient()
+	sender, peer1 := newTestClient()
 	defer peer1.Close()
-	defer client1.conn.Close()
-	client2, peer2 := newTestClient()
+	defer sender.conn.Close()
+	peerClient, peer2 := newTestClient()
 	defer peer2.Close()
-	defer client2.conn.Close()
+	defer peerClient.conn.Close()
 
 	broker.clientsMu.Lock()
-	broker.clients[client1] = struct{}{}
-	broker.clients[client2] = struct{}{}
+	broker.clients[sender] = struct{}{}
+	broker.clients[peerClient] = struct{}{}
+	broker.primary = sender
 	broker.clientsMu.Unlock()
 
-	// Создаем тестовый пакет
 	testPacket := &meshtasticpb.MeshPacket{
 		From: 123456,
 		To:   789012,
 		Id:   42,
 	}
 	toRadio := &meshtasticpb.ToRadio{
-		PayloadVariant: &meshtasticpb.ToRadio_Packet{
-			Packet: testPacket,
-		},
+		PayloadVariant: &meshtasticpb.ToRadio_Packet{Packet: testPacket},
 	}
 	payload, err := proto.Marshal(toRadio)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	// Клиент 1 отправляет пакет
-	broker.handleClientPayload(client1, payload)
+	broker.handleClientPayload(sender, payload)
 
-	// Проверяем, что пакет был отправлен в serial
 	out, err := frame.ReadFrame(bufio.NewReader(serialR))
 	if err != nil {
 		t.Fatalf("ReadFrame from serial: %v", err)
@@ -243,19 +241,273 @@ func TestProtocolBrokerPacketBroadcastToAllClients(t *testing.T) {
 		t.Fatalf("packet not forwarded to serial correctly")
 	}
 
-	// Проверяем, что оба клиента получили broadcast
-	for i, client := range []*client{client1, client2} {
-		broadcastPayload := recvPayload(t, client.send)
-		fromRadio := &meshtasticpb.FromRadio{}
-		if err := proto.Unmarshal(broadcastPayload, fromRadio); err != nil {
-			t.Fatalf("client %d: unmarshal broadcast: %v", i+1, err)
-		}
-		pkt := fromRadio.GetPacket()
-		if pkt == nil {
-			t.Fatalf("client %d: expected packet in broadcast", i+1)
-		}
-		if pkt.GetId() != 42 || pkt.GetFrom() != 123456 {
-			t.Fatalf("client %d: broadcast packet mismatch: got id=%d from=%d", i+1, pkt.GetId(), pkt.GetFrom())
-		}
+	broadcastPayload := recvPayload(t, peerClient.send)
+	fromRadio := &meshtasticpb.FromRadio{}
+	if err := proto.Unmarshal(broadcastPayload, fromRadio); err != nil {
+		t.Fatalf("unmarshal broadcast: %v", err)
+	}
+	pkt := fromRadio.GetPacket()
+	if pkt == nil {
+		t.Fatalf("expected packet in peer broadcast")
+	}
+	if pkt.GetId() != 42 || pkt.GetFrom() != 123456 {
+		t.Fatalf("peer broadcast mismatch: got id=%d from=%d", pkt.GetId(), pkt.GetFrom())
+	}
+
+	select {
+	case payload := <-sender.send:
+		t.Fatalf("sender must not receive its own echo, got %d bytes", len(payload))
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestProtocolBrokerSecondaryPacketForwardsWhenReadOnlyFalse(t *testing.T) {
+	serialR, serialW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer serialR.Close()
+	defer serialW.Close()
+
+	broker := New(serialW, false, false)
+	primary, peer1 := newTestClient()
+	defer peer1.Close()
+	defer primary.conn.Close()
+	secondary, peer2 := newTestClient()
+	defer peer2.Close()
+	defer secondary.conn.Close()
+
+	broker.clientsMu.Lock()
+	broker.clients[primary] = struct{}{}
+	broker.clients[secondary] = struct{}{}
+	broker.primary = primary
+	broker.clientsMu.Unlock()
+
+	toRadio := &meshtasticpb.ToRadio{
+		PayloadVariant: &meshtasticpb.ToRadio_Packet{Packet: &meshtasticpb.MeshPacket{Id: 77}},
+	}
+	payload, err := proto.Marshal(toRadio)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	broker.handleClientPayload(secondary, payload)
+
+	out, err := frame.ReadFrame(bufio.NewReader(serialR))
+	if err != nil {
+		t.Fatalf("ReadFrame: %v", err)
+	}
+	got := &meshtasticpb.ToRadio{}
+	if err := proto.Unmarshal(out, got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.GetPacket().GetId() != 77 {
+		t.Fatalf("expected secondary packet id=77 to reach serial, got %d", got.GetPacket().GetId())
+	}
+
+	echo := recvPayload(t, primary.send)
+	fr := &meshtasticpb.FromRadio{}
+	if err := proto.Unmarshal(echo, fr); err != nil {
+		t.Fatalf("primary echo unmarshal: %v", err)
+	}
+	if fr.GetPacket().GetId() != 77 {
+		t.Fatalf("primary should see sender echo id=77, got %d", fr.GetPacket().GetId())
+	}
+}
+
+func TestProtocolBrokerSecondaryPacketRejectedWhenReadOnlyTrue(t *testing.T) {
+	serialR, serialW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer serialR.Close()
+	defer serialW.Close()
+
+	broker := New(serialW, true, false)
+	primary, peer1 := newTestClient()
+	defer peer1.Close()
+	defer primary.conn.Close()
+	secondary, peer2 := newTestClient()
+	defer peer2.Close()
+	defer secondary.conn.Close()
+
+	broker.clientsMu.Lock()
+	broker.clients[primary] = struct{}{}
+	broker.clients[secondary] = struct{}{}
+	broker.primary = primary
+	broker.clientsMu.Unlock()
+
+	toRadio := &meshtasticpb.ToRadio{
+		PayloadVariant: &meshtasticpb.ToRadio_Packet{Packet: &meshtasticpb.MeshPacket{Id: 88}},
+	}
+	payload, err := proto.Marshal(toRadio)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	drainDone := make(chan struct{})
+	go func() {
+		defer close(drainDone)
+		buf := make([]byte, 16)
+		_, _ = serialR.Read(buf)
+	}()
+
+	broker.handleClientPayload(secondary, payload)
+
+	select {
+	case <-drainDone:
+		t.Fatalf("read-only secondary packet must not reach serial")
+	case <-time.After(150 * time.Millisecond):
+	}
+	_ = serialR.Close()
+	<-drainDone
+}
+
+func TestProtocolBrokerNonPrimaryDisconnectDoesNotReachSerial(t *testing.T) {
+	serialR, serialW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer serialR.Close()
+	defer serialW.Close()
+
+	broker := New(serialW, false, false)
+	primary, peer1 := newTestClient()
+	defer peer1.Close()
+	secondary, peer2 := newTestClient()
+	defer peer2.Close()
+
+	broker.clientsMu.Lock()
+	broker.clients[primary] = struct{}{}
+	broker.clients[secondary] = struct{}{}
+	broker.primary = primary
+	broker.clientsMu.Unlock()
+
+	toRadio := &meshtasticpb.ToRadio{PayloadVariant: &meshtasticpb.ToRadio_Disconnect{Disconnect: true}}
+	payload, err := proto.Marshal(toRadio)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 16)
+		_, _ = serialR.Read(buf)
+	}()
+
+	broker.handleClientPayload(secondary, payload)
+
+	select {
+	case <-done:
+		t.Fatalf("secondary disconnect must not be written to serial")
+	case <-time.After(150 * time.Millisecond):
+	}
+	_ = serialR.Close()
+	<-done
+
+	broker.clientsMu.RLock()
+	_, stillPresent := broker.clients[secondary]
+	broker.clientsMu.RUnlock()
+	if stillPresent {
+		t.Fatalf("secondary should be removed after disconnect request")
+	}
+}
+
+func TestProtocolBrokerSecondaryWantConfigDoesNotReachSerial(t *testing.T) {
+	serialR, serialW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer serialR.Close()
+	defer serialW.Close()
+
+	// readOnlyClients=false — confirms caching of WantConfigId is now
+	// independent of the flag.
+	broker := New(serialW, false, false)
+	primary, peer1 := newTestClient()
+	defer peer1.Close()
+	defer primary.conn.Close()
+	secondary, peer2 := newTestClient()
+	defer peer2.Close()
+	defer secondary.conn.Close()
+
+	broker.clientsMu.Lock()
+	broker.clients[primary] = struct{}{}
+	broker.clients[secondary] = struct{}{}
+	broker.primary = primary
+	broker.clientsMu.Unlock()
+
+	broker.cache.update(
+		&meshtasticpb.FromRadio{PayloadVariant: &meshtasticpb.FromRadio_MyInfo{MyInfo: &meshtasticpb.MyNodeInfo{}}},
+		[]byte("MYINFO"),
+	)
+
+	toRadio := &meshtasticpb.ToRadio{PayloadVariant: &meshtasticpb.ToRadio_WantConfigId{WantConfigId: 321}}
+	payload, err := proto.Marshal(toRadio)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 16)
+		_, _ = serialR.Read(buf)
+	}()
+
+	broker.handleClientPayload(secondary, payload)
+
+	first := recvPayload(t, secondary.send)
+	if string(first) != "MYINFO" {
+		t.Fatalf("unexpected cache payload: got %q", first)
+	}
+	last := recvPayload(t, secondary.send)
+	resp := &meshtasticpb.FromRadio{}
+	if err := proto.Unmarshal(last, resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.GetConfigCompleteId() != 321 {
+		t.Fatalf("config_complete_id mismatch: got %d", resp.GetConfigCompleteId())
+	}
+
+	select {
+	case <-done:
+		t.Fatalf("secondary WantConfigId must not reach serial when not primary")
+	case <-time.After(100 * time.Millisecond):
+	}
+	_ = serialR.Close()
+	<-done
+}
+
+func TestProtocolBrokerAddClientTracksPrimaryAlways(t *testing.T) {
+	serialR, serialW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer serialR.Close()
+	defer serialW.Close()
+
+	broker := New(serialW, false, false)
+	c1, c1Peer := net.Pipe()
+	defer c1.Close()
+	defer c1Peer.Close()
+	c2, c2Peer := net.Pipe()
+	defer c2.Close()
+	defer c2Peer.Close()
+
+	broker.AddClient(c1)
+	broker.AddClient(c2)
+
+	broker.clientsMu.RLock()
+	primary := broker.primary
+	count := len(broker.clients)
+	broker.clientsMu.RUnlock()
+
+	if primary == nil {
+		t.Fatalf("primary must be tracked even when readOnlyClients=false")
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 clients, got %d", count)
 	}
 }
