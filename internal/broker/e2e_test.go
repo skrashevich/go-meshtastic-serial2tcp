@@ -39,6 +39,16 @@ type meshtasticNodeSim struct {
 	wantCount       int
 	disconnectCount int
 
+	// rebootedBeforeConfig, when true, causes the sim to reply to the first
+	// WantConfigId with only FromRadio_Rebooted=true (no config stream). The
+	// firmware normally clears its rebooted flag and waits for the phone to
+	// re-issue WantConfigId; the broker under test should do that re-issue
+	// automatically, at which point subsequent WantConfigIds get the normal
+	// config dump. This mirrors the real device behaviour that triggered the
+	// "rebooted loop" bug.
+	rebootedBeforeConfig bool
+	rebootedAlreadySent  bool
+
 	stopOnce sync.Once
 	stopped  chan struct{}
 }
@@ -86,7 +96,17 @@ func (n *meshtasticNodeSim) run(t *testing.T) {
 			case *meshtasticpb.ToRadio_WantConfigId:
 				n.mu.Lock()
 				n.wantCount++
+				sendRebootedOnly := n.rebootedBeforeConfig && !n.rebootedAlreadySent
+				if sendRebootedOnly {
+					n.rebootedAlreadySent = true
+				}
 				n.mu.Unlock()
+				if sendRebootedOnly {
+					n.sendFromRadio(t, &meshtasticpb.FromRadio{
+						PayloadVariant: &meshtasticpb.FromRadio_Rebooted{Rebooted: true},
+					})
+					continue
+				}
 				n.dumpConfig(t, v.WantConfigId)
 			case *meshtasticpb.ToRadio_Disconnect:
 				n.mu.Lock()
@@ -422,7 +442,10 @@ func TestE2EThreeClientsFullHandshakeAndSync(t *testing.T) {
 		}
 	}
 
-	// --- Step 6: primary A disconnects → C gets promoted; C's WantConfigId reaches radio ---
+	// --- Step 6: primary A disconnects → C gets promoted; C's WantConfigId
+	// is still served from the populated cache and must NOT reach the radio
+	// (serving from cache regardless of primary/secondary is what avoids the
+	// firmware rebooted=true loop this broker is designed to prevent). ---
 	clientA.close()
 	time.Sleep(150 * time.Millisecond)
 
@@ -442,9 +465,12 @@ func TestE2EThreeClientsFullHandshakeAndSync(t *testing.T) {
 	if got := framesC2[len(framesC2)-1].GetConfigCompleteId(); got != 0xCCCC {
 		t.Fatalf("C after promotion: config_complete_id = %x, want 0xCCCC", got)
 	}
+	if !containsMyInfo(framesC2, radio.myNodeNum) {
+		t.Fatalf("C after promotion: cached dump missing MyInfo")
+	}
 	_, wantsAfterPromotion, _ := radio.stats()
-	if wantsAfterPromotion != 2 {
-		t.Fatalf("promoted primary's WantConfigId must reach radio; total wants=%d", wantsAfterPromotion)
+	if wantsAfterPromotion != 1 {
+		t.Fatalf("promoted primary's WantConfigId must be cache-served; radio saw %d total wants", wantsAfterPromotion)
 	}
 
 	// --- Step 7: inject a malformed serial frame and a valid one → C still receives the valid one ---
@@ -501,6 +527,140 @@ func TestE2ERadioReconnectIsolation(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("broker did not exit after radio disconnect")
 	}
+}
+
+// TestE2ERebootedLoopRecovery reproduces the production bug and asserts the
+// fix: on the first WantConfigId the simulated radio replies with only
+// FromRadio_Rebooted=true. The broker must (a) not forward the rebooted frame
+// to the client, (b) automatically re-issue the WantConfigId with a fresh
+// nonce, and (c) eventually deliver a clean my_info + config_complete_id to
+// the client with the client's ORIGINAL nonce.
+//
+// Additionally, a second client that connects afterwards must be served
+// entirely from the now-populated cache.
+func TestE2ERebootedLoopRecovery(t *testing.T) {
+	radio := newMeshtasticNodeSim()
+	radio.rebootedBeforeConfig = true
+	defer radio.close()
+	radio.run(t)
+
+	b := New(radio.brokerEnd, false, false)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	runDone := make(chan error, 1)
+	go func() { runDone <- b.Run(ctx) }()
+	defer func() {
+		cancel()
+		radio.close()
+		<-runDone
+	}()
+
+	primary := connectE2EClient(t, b, "primary")
+	defer primary.close()
+	time.Sleep(20 * time.Millisecond)
+
+	const primaryNonce uint32 = 0xDEADBEEF
+	primary.sendWantConfig(t, primaryNonce)
+
+	frames := primary.readUntil(t, 3*time.Second, isConfigComplete)
+	for _, f := range frames {
+		if f.GetRebooted() {
+			t.Fatalf("broker leaked rebooted=true to the primary client; frame=%v", f)
+		}
+	}
+	last := frames[len(frames)-1]
+	if last.GetConfigCompleteId() != primaryNonce {
+		t.Fatalf("primary: expected config_complete_id=%x, got %x", primaryNonce, last.GetConfigCompleteId())
+	}
+	if !containsMyInfo(frames, radio.myNodeNum) {
+		t.Fatalf("primary: config dump missing MyInfo after rebooted recovery")
+	}
+
+	_, wantCountAfterRecovery, _ := radio.stats()
+	if wantCountAfterRecovery != 2 {
+		t.Fatalf("expected broker to re-issue want_config_id exactly once after rebooted; radio saw %d total wants", wantCountAfterRecovery)
+	}
+
+	// Now a brand-new client comes in after the cache has been populated. It
+	// must be served entirely from cache — the radio should see NO additional
+	// want_config_id. This is the scenario meshmonitor was hitting in the bug
+	// report: connecting as secondary, seeing an empty cache, and getting
+	// only config_complete_id back. With the fix in place, it gets the full
+	// cached dump.
+	secondary := connectE2EClient(t, b, "secondary")
+	defer secondary.close()
+	time.Sleep(20 * time.Millisecond)
+
+	const secondaryNonce uint32 = 0xFFFFFFFF
+	secondary.sendWantConfig(t, secondaryNonce)
+	cachedFrames := secondary.readUntil(t, 2*time.Second, isConfigComplete)
+	if cachedFrames[len(cachedFrames)-1].GetConfigCompleteId() != secondaryNonce {
+		t.Fatalf("secondary: config_complete_id mismatch")
+	}
+	if !containsMyInfo(cachedFrames, radio.myNodeNum) {
+		t.Fatalf("secondary: cached dump missing MyInfo")
+	}
+
+	_, finalWants, _ := radio.stats()
+	if finalWants != 2 {
+		t.Fatalf("secondary must be cache-served; radio saw %d total wants after secondary join", finalWants)
+	}
+}
+
+// TestE2EPrimaryDisconnectNotForwardedToRadio locks in the invariant that no
+// TCP client's Disconnect — primary or secondary — reaches the radio. This
+// behavior is critical: forwarding per-client disconnects was what caused the
+// firmware to reset its phone-connection state and reply to the next
+// WantConfigId with rebooted=true, triggering the loop.
+func TestE2EPrimaryDisconnectNotForwardedToRadio(t *testing.T) {
+	radio := newMeshtasticNodeSim()
+	defer radio.close()
+	radio.run(t)
+
+	b := New(radio.brokerEnd, false, false)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	runDone := make(chan error, 1)
+	go func() { runDone <- b.Run(ctx) }()
+	defer func() {
+		cancel()
+		radio.close()
+		<-runDone
+	}()
+
+	primary := connectE2EClient(t, b, "primary")
+	defer primary.close()
+	time.Sleep(20 * time.Millisecond)
+
+	primary.sendDisconnect(t)
+	time.Sleep(100 * time.Millisecond)
+
+	_, _, disconnects := radio.stats()
+	if disconnects != 0 {
+		t.Fatalf("primary Disconnect must not reach radio, got %d", disconnects)
+	}
+
+	b.clientsMu.RLock()
+	_, stillPresent := b.clients[findClientByAddrPrefix(b, "pipe")]
+	count := len(b.clients)
+	b.clientsMu.RUnlock()
+	_ = stillPresent
+	if count != 0 {
+		t.Fatalf("primary should be removed locally, %d clients remain", count)
+	}
+}
+
+// findClientByAddrPrefix returns any client whose address starts with prefix.
+// Used only in tests to assert presence.
+func findClientByAddrPrefix(b *Broker, prefix string) *client {
+	b.clientsMu.RLock()
+	defer b.clientsMu.RUnlock()
+	for cl := range b.clients {
+		if len(cl.addr) >= len(prefix) && cl.addr[:len(prefix)] == prefix {
+			return cl
+		}
+	}
+	return nil
 }
 
 func containsMyInfo(frames []*meshtasticpb.FromRadio, want uint32) bool {

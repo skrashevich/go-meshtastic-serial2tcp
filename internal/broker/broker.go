@@ -255,6 +255,18 @@ func (c *configCache) empty() bool {
 		len(c.moduleConfig) == 0 && len(c.channels) == 0 && c.metadata == nil && c.deviceUI == nil
 }
 
+func (c *configCache) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.myInfo = nil
+	c.nodeInfo = make(map[uint32][]byte)
+	c.config = make(map[string][]byte)
+	c.moduleConfig = make(map[string][]byte)
+	c.channels = make(map[int32][]byte)
+	c.metadata = nil
+	c.deviceUI = nil
+}
+
 type configRequest struct {
 	client     *client
 	originalID uint32
@@ -580,8 +592,51 @@ func (b *Broker) routeFromRadio(frame *meshtasticpb.FromRadio, payload []byte) b
 	case *meshtasticpb.FromRadio_ConfigCompleteId:
 		b.handleConfigComplete(v.ConfigCompleteId, payload)
 		return true
+	case *meshtasticpb.FromRadio_Rebooted:
+		// rebooted=true is a serial-console-only hint meaning "I (the radio)
+		// just came up / resynced; discard any cached state and re-request".
+		// We absorb it at the broker layer:
+		//   * We never forward rebooted to TCP clients — some client libraries
+		//     (Python meshtastic et al.) treat rebooted as a "connection is
+		//     dead, tear it down" signal, which used to create a loop where
+		//     every want_config_id reply was just rebooted=true and no client
+		//     ever saw the config dump. The broker owns the serial session,
+		//     so it handles this protocol detail on the clients' behalf.
+		//   * Cached state is cleared and any pending client config requests
+		//     are re-issued with fresh nonces so the firmware actually starts
+		//     streaming the config dump.
+		b.handleRebooted()
+		return true
 	default:
 		return false
+	}
+}
+
+// handleRebooted is invoked when the radio sends FromRadio.rebooted=true.
+// It clears the config cache (stale) and re-issues any in-flight client
+// WantConfigId so the firmware starts sending the config dump instead of
+// sitting idle after the rebooted notification.
+func (b *Broker) handleRebooted() {
+	log.Printf("Radio sent rebooted=true; clearing cache and re-issuing pending config requests")
+	b.cache.reset()
+
+	b.pendingMu.Lock()
+	old := b.pendingConfig
+	b.pendingConfig = make(map[uint32]configRequest)
+	b.pendingMu.Unlock()
+
+	for _, req := range old {
+		if req.client == nil || req.client.isClosed() {
+			continue
+		}
+		newID := b.reserveConfigRequest(req.client, req.originalID)
+		toRadio := &meshtasticpb.ToRadio{
+			PayloadVariant: &meshtasticpb.ToRadio_WantConfigId{WantConfigId: newID},
+		}
+		if err := b.forwardToSerial(toRadio); err != nil {
+			b.fail(err)
+			return
+		}
 	}
 }
 
@@ -677,11 +732,18 @@ func (b *Broker) handleClientPayload(cl *client, payload []byte) {
 
 	switch v := toRadio.GetPayloadVariant().(type) {
 	case *meshtasticpb.ToRadio_WantConfigId:
-		// WantConfigId is always cache-served for non-primary clients so that
-		// every client sees a fresh hand-shake without hammering the radio
-		// with duplicate config dumps (and without broadcasting those dumps
-		// to peers that already have the state).
-		if primary {
+		// WantConfigId is always cache-served when the cache is populated —
+		// including for the primary client. Forwarding every primary's
+		// WantConfigId used to trigger a firmware re-handshake that replied
+		// with rebooted=true (and nothing else), after which the client
+		// disconnected and a new client repeated the cycle. By serving the
+		// primary from cache when we already have a snapshot, we keep the
+		// radio's session-state stable and avoid the reboot loop.
+		//
+		// Only when the cache is empty (cold start or freshly reset after a
+		// real radio reboot) do we actually hit the wire with a broker-owned
+		// nonce.
+		if b.cache.empty() {
 			newID := b.reserveConfigRequest(cl, v.WantConfigId)
 			v.WantConfigId = newID
 			if err := b.forwardToSerial(toRadio); err != nil {
@@ -691,14 +753,13 @@ func (b *Broker) handleClientPayload(cl *client, payload []byte) {
 			b.sendCachedConfig(cl, v.WantConfigId)
 		}
 	case *meshtasticpb.ToRadio_Disconnect:
-		// Only the primary owns the radio session; forwarding a secondary
-		// disconnect would tell the radio the app is gone while other clients
-		// are still attached.
-		if primary {
-			if err := b.forwardToSerial(toRadio); err != nil {
-				b.fail(err)
-			}
-		}
+		// A TCP client dropping out does not mean the (broker-owned) phone
+		// session with the radio is gone — there may be other clients still
+		// attached, and even if there are not, we want to keep the firmware's
+		// phone-connection state stable so the next client's WantConfigId
+		// does not trigger another rebooted=true reply. The broker will send
+		// its own Disconnect to the radio when it shuts down, not when any
+		// individual TCP client leaves.
 		b.removeClient(cl)
 		return
 	case *meshtasticpb.ToRadio_Packet:
