@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="320" viewBox="0 0 980 320" role="img" aria-labelledby="title desc">
+  <title id="title">go-meshtastic-serial2tcp architecture</title>
+  <desc id="desc">Diagram showing a Meshtastic radio connected via serial to the broker, which serves multiple TCP clients.</desc>
+  <defs>
+    <style>
+      .bg { fill: #0b1020; }
+      .box { fill: #131a2e; stroke: #5eead4; stroke-width: 2; rx: 14; }
+      .box2 { fill: #172036; stroke: #93c5fd; stroke-width: 2; rx: 14; }
+      .box3 { fill: #1a2238; stroke: #c4b5fd; stroke-width: 2; rx: 14; }
+      .text { fill: #e5eefc; font-family: Arial, Helvetica, sans-serif; font-size: 22px; }
+      .sub { fill: #9fb0d1; font-family: Arial, Helvetica, sans-serif; font-size: 16px; }
+      .label { fill: #8be9dd; font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: bold; }
+      .arrow { stroke: #7dd3fc; stroke-width: 3; fill: none; marker-end: url(#arrowhead); }
+      .line { stroke: #94a3b8; stroke-width: 2.5; fill: none; marker-end: url(#arrowhead2); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#7dd3fc" />
+    </marker>
+    <marker id="arrowhead2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 10 3, 0 6" fill="#94a3b8" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="980" height="320" rx="20"/>
+
+  <rect class="box" x="40" y="110" width="180" height="90" rx="14"/>
+  <text class="text" x="130" y="148" text-anchor="middle">Meshtastic Radio</text>
+  <text class="sub" x="130" y="174" text-anchor="middle">physical device</text>
+
+  <rect class="box2" x="290" y="110" width="220" height="90" rx="14"/>
+  <text class="text" x="400" y="145" text-anchor="middle">Serial device</text>
+  <text class="sub" x="400" y="171" text-anchor="middle">USB / UART / ttyUSB0</text>
+
+  <rect class="box3" x="580" y="80" width="240" height="150" rx="14"/>
+  <text class="text" x="700" y="122" text-anchor="middle">serial2tcp broker</text>
+  <text class="sub" x="700" y="148" text-anchor="middle">shared session owner</text>
+  <text class="sub" x="700" y="170" text-anchor="middle">config cache + client mux</text>
+  <text class="sub" x="700" y="192" text-anchor="middle">mDNS + reconnect handling</text>
+
+  <rect class="box2" x="850" y="34" width="100" height="60" rx="14"/>
+  <text class="text" x="900" y="70" text-anchor="middle" font-size="18">Client 1</text>
+
+  <rect class="box2" x="850" y="128" width="100" height="60" rx="14"/>
+  <text class="text" x="900" y="164" text-anchor="middle" font-size="18">Client 2</text>
+
+  <rect class="box2" x="850" y="222" width="100" height="60" rx="14"/>
+  <text class="text" x="900" y="258" text-anchor="middle" font-size="18">Client 3</text>
+
+  <path class="arrow" d="M220 155 C 245 155, 255 155, 290 155"/>
+  <path class="arrow" d="M510 155 C 535 155, 545 155, 580 155"/>
+  <path class="line" d="M820 110 C 836 96, 838 82, 850 64"/>
+  <path class="line" d="M820 155 C 836 155, 838 155, 850 158"/>
+  <path class="line" d="M820 200 C 836 214, 838 228, 850 252"/>
+
+  <text class="label" x="250" y="142">serial frames</text>
+  <text class="label" x="530" y="142">Meshtastic protocol</text>
+  <text class="label" x="840" y="20">multiple TCP clients</text>
+</svg>
