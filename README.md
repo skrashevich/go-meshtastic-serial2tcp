@@ -1,5 +1,7 @@
 # go-meshtastic-serial2tcp
 
+[Русская версия](README.ru.md)
+
 `go-meshtastic-serial2tcp` is a Go-based TCP-to-serial bridge for Meshtastic radios.
 
 It exposes a Meshtastic device connected over USB or another serial interface as a TCP service, so desktop apps, scripts, containers, or remote tools can talk to the radio without owning the serial port directly.
@@ -37,13 +39,30 @@ In short: a simple forwarder passes bytes, while this service tries to preserve 
 
 ## Architecture
 
-```text
-Meshtastic Radio <-> Serial Device <-> serial2tcp broker <-> TCP client 1
-                                                      |-> TCP client 2
-                                                      |-> TCP client 3
-```
+![Architecture diagram](docs/architecture.svg)
 
-The broker owns the serial connection, maintains shared state, and exposes the radio to multiple TCP clients as a single coordinated service.
+The broker sits between the physical Meshtastic radio and multiple TCP clients. It owns the serial connection, maintains shared state, and exposes the radio as one coordinated TCP service.
+
+## FAQ
+
+### Why not `ser2net`?
+
+`ser2net` is a good general-purpose serial-over-network tool, but it treats the connection as a byte stream. Meshtastic clients are more sensitive than that: they expect stable session behavior, config exchange, and predictable reconnect handling. `go-meshtastic-serial2tcp` understands those patterns and is designed to keep multiple Meshtastic clients from stepping on each other.
+
+### Why not `socat`?
+
+`socat` is excellent for quick plumbing, testing, and one-off forwarding. It is much less useful when several Meshtastic clients need to share one radio over time. It does not provide broker-owned session logic, config caching, or Meshtastic-specific reconnect handling.
+
+### Why not direct USB passthrough?
+
+Direct USB passthrough is fine when exactly one process owns the radio and everything runs on the same machine. It becomes awkward when you want to:
+
+- share one radio across several apps,
+- expose the radio to containers,
+- connect from another machine on the LAN,
+- avoid serial-device ownership conflicts.
+
+This project exists for those cases.
 
 ## Requirements
 
