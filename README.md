@@ -15,6 +15,36 @@ Unlike a naive serial forwarder, this bridge is designed for **multi-client Mesh
 - **Docker-ready** deployment for servers, Raspberry Pi setups, and containerized environments
 - Written in **Go**, with generated protobuf support for Meshtastic frames
 
+## Typical use cases
+
+- **Connect multiple desktop clients to one Meshtastic radio** without letting them fight over a single serial device.
+- **Expose a USB-connected Meshtastic node to Docker containers** or other isolated services that should not access the serial port directly.
+- **Share one radio across tools on a LAN**, including local apps, remote scripts, and containerized workloads.
+- **Avoid serial-port contention** when several clients need read access, config access, or packet visibility at the same time.
+
+## Why not a simple serial forwarder?
+
+A simple serial forwarder can expose bytes over TCP, but it usually does not understand Meshtastic session behavior. That becomes painful as soon as more than one client is involved.
+
+This bridge is built specifically for Meshtastic and adds the pieces a plain forwarder normally lacks:
+
+- **Multi-client behavior** with one broker-owned phone↔radio session
+- **Config caching** so repeated `want_config_id` requests do not constantly reset state
+- **Reconnect resilience** when the radio reports `rebooted` or clients disconnect unpredictably
+- **Broker-owned session control** so one client does not accidentally tear down the radio state for everyone else
+
+In short: a simple forwarder passes bytes, while this service tries to preserve a stable Meshtastic session for multiple clients.
+
+## Architecture
+
+```text
+Meshtastic Radio <-> Serial Device <-> serial2tcp broker <-> TCP client 1
+                                                      |-> TCP client 2
+                                                      |-> TCP client 3
+```
+
+The broker owns the serial connection, maintains shared state, and exposes the radio to multiple TCP clients as a single coordinated service.
+
 ## Requirements
 
 ### Runtime
