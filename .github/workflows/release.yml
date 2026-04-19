@@ -188,22 +188,27 @@ jobs:
           if [ -n "${GOARM:-}" ]; then
             ARCH_SUFFIX="${GOARCH}v${GOARM}"
           fi
-          NAME="go-meshtastic-serial2tcp_${TAG}_${GOOS}_${ARCH_SUFFIX}"
-          BIN="${NAME}${EXT}"
+          BIN="go-meshtastic-serial2tcp_${TAG}_${GOOS}_${ARCH_SUFFIX}${EXT}"
           mkdir -p dist
           go build -trimpath \
             -ldflags "-s -w -X main.version=${VERSION}" \
             -o "dist/${BIN}" .
+          echo "BIN_NAME=${BIN}" >> "$GITHUB_ENV"
+          ls -la dist
 
+      - name: Compress with UPX (linux & windows)
+        if: matrix.goos == 'linux' || matrix.goos == 'windows'
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          version: latest
+          files: dist/${{ env.BIN_NAME }}
+          args: --best --lzma
+
+      - name: Generate SHA-256 checksum
+        run: |
+          set -euo pipefail
           cd dist
-          if [ "${GOOS}" = "windows" ]; then
-            zip -q "${NAME}.zip" "${BIN}"
-            sha256sum "${NAME}.zip" > "${NAME}.zip.sha256"
-          else
-            tar --owner=0 --group=0 -czf "${NAME}.tar.gz" "${BIN}"
-            sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
-          fi
-          rm -f "${BIN}"
+          sha256sum "${BIN_NAME}" > "${BIN_NAME}.sha256"
           ls -la
 
       - uses: actions/upload-artifact@v4
