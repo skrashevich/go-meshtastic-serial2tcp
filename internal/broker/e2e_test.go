@@ -641,26 +641,11 @@ func TestE2EPrimaryDisconnectNotForwardedToRadio(t *testing.T) {
 	}
 
 	b.clientsMu.RLock()
-	_, stillPresent := b.clients[findClientByAddrPrefix(b, "pipe")]
 	count := len(b.clients)
 	b.clientsMu.RUnlock()
-	_ = stillPresent
 	if count != 0 {
 		t.Fatalf("primary should be removed locally, %d clients remain", count)
 	}
-}
-
-// findClientByAddrPrefix returns any client whose address starts with prefix.
-// Used only in tests to assert presence.
-func findClientByAddrPrefix(b *Broker, prefix string) *client {
-	b.clientsMu.RLock()
-	defer b.clientsMu.RUnlock()
-	for cl := range b.clients {
-		if len(cl.addr) >= len(prefix) && cl.addr[:len(prefix)] == prefix {
-			return cl
-		}
-	}
-	return nil
 }
 
 func containsMyInfo(frames []*meshtasticpb.FromRadio, want uint32) bool {

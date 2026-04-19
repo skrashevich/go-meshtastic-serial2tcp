@@ -480,6 +480,55 @@ func TestProtocolBrokerSecondaryWantConfigDoesNotReachSerial(t *testing.T) {
 	<-done
 }
 
+func TestProtocolBrokerRepeatedWantConfigDoesNotLeakPending(t *testing.T) {
+	serialR, serialW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer serialR.Close()
+	defer serialW.Close()
+
+	// Drain the serial side so forwardToSerial does not block on the pipe.
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			if _, err := serialR.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	broker := New(serialW, false, false)
+	client, peer := newTestClient()
+	defer peer.Close()
+	defer client.conn.Close()
+
+	broker.clientsMu.Lock()
+	broker.clients[client] = struct{}{}
+	broker.primary = client
+	broker.clientsMu.Unlock()
+
+	// The cache stays empty on purpose — that's the branch that actually
+	// reserves a broker-side nonce. If the client retries WantConfigId
+	// while one is still pending, the broker must replace the old
+	// pending entry, not stack a new one next to it.
+	for i := uint32(1); i <= 5; i++ {
+		toRadio := &meshtasticpb.ToRadio{PayloadVariant: &meshtasticpb.ToRadio_WantConfigId{WantConfigId: i}}
+		payload, err := proto.Marshal(toRadio)
+		if err != nil {
+			t.Fatalf("marshal[%d]: %v", i, err)
+		}
+		broker.handleClientPayload(client, payload)
+	}
+
+	broker.pendingMu.Lock()
+	count := len(broker.pendingConfig)
+	broker.pendingMu.Unlock()
+	if count != 1 {
+		t.Fatalf("expected exactly 1 pending config entry after 5 retries, got %d", count)
+	}
+}
+
 func TestProtocolBrokerAddClientTracksPrimaryAlways(t *testing.T) {
 	serialR, serialW, err := os.Pipe()
 	if err != nil {

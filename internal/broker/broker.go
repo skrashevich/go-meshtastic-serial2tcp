@@ -593,18 +593,9 @@ func (b *Broker) routeFromRadio(frame *meshtasticpb.FromRadio, payload []byte) b
 		b.handleConfigComplete(v.ConfigCompleteId, payload)
 		return true
 	case *meshtasticpb.FromRadio_Rebooted:
-		// rebooted=true is a serial-console-only hint meaning "I (the radio)
-		// just came up / resynced; discard any cached state and re-request".
-		// We absorb it at the broker layer:
-		//   * We never forward rebooted to TCP clients — some client libraries
-		//     (Python meshtastic et al.) treat rebooted as a "connection is
-		//     dead, tear it down" signal, which used to create a loop where
-		//     every want_config_id reply was just rebooted=true and no client
-		//     ever saw the config dump. The broker owns the serial session,
-		//     so it handles this protocol detail on the clients' behalf.
-		//   * Cached state is cleared and any pending client config requests
-		//     are re-issued with fresh nonces so the firmware actually starts
-		//     streaming the config dump.
+		// Absorb rebooted=true: never forwarded to clients (some libraries
+		// treat it as a teardown signal and drop TCP mid-handshake). See
+		// handleRebooted for cache reset + pending re-issue semantics.
 		b.handleRebooted()
 		return true
 	default:
@@ -732,18 +723,17 @@ func (b *Broker) handleClientPayload(cl *client, payload []byte) {
 
 	switch v := toRadio.GetPayloadVariant().(type) {
 	case *meshtasticpb.ToRadio_WantConfigId:
-		// WantConfigId is always cache-served when the cache is populated —
-		// including for the primary client. Forwarding every primary's
-		// WantConfigId used to trigger a firmware re-handshake that replied
-		// with rebooted=true (and nothing else), after which the client
-		// disconnected and a new client repeated the cycle. By serving the
-		// primary from cache when we already have a snapshot, we keep the
-		// radio's session-state stable and avoid the reboot loop.
-		//
-		// Only when the cache is empty (cold start or freshly reset after a
-		// real radio reboot) do we actually hit the wire with a broker-owned
-		// nonce.
+		// Cache-first regardless of primary/secondary. Re-handshaking on
+		// every client's WantConfigId made the firmware reply with just
+		// rebooted=true, which dropped the client and never populated the
+		// cache. The wire is only hit on a cold start or after rebooted.
 		if b.cache.empty() {
+			// If this client already has an in-flight config request, drop
+			// it: reserving a new nonce without clearing the old one would
+			// leave a ghost entry in pendingConfig that only gets cleaned
+			// up when the client disconnects, leaking memory across client
+			// retries.
+			b.dropPendingForClient(cl)
 			newID := b.reserveConfigRequest(cl, v.WantConfigId)
 			v.WantConfigId = newID
 			if err := b.forwardToSerial(toRadio); err != nil {
@@ -753,13 +743,10 @@ func (b *Broker) handleClientPayload(cl *client, payload []byte) {
 			b.sendCachedConfig(cl, v.WantConfigId)
 		}
 	case *meshtasticpb.ToRadio_Disconnect:
-		// A TCP client dropping out does not mean the (broker-owned) phone
-		// session with the radio is gone — there may be other clients still
-		// attached, and even if there are not, we want to keep the firmware's
-		// phone-connection state stable so the next client's WantConfigId
-		// does not trigger another rebooted=true reply. The broker will send
-		// its own Disconnect to the radio when it shuts down, not when any
-		// individual TCP client leaves.
+		// Per-client TCP disconnects are never forwarded to the radio:
+		// firmware treats a phone disconnect as "reset phone state", which
+		// then makes the next WantConfigId reply rebooted=true and starts
+		// the loop this broker is designed to avoid.
 		b.removeClient(cl)
 		return
 	case *meshtasticpb.ToRadio_Packet:
@@ -964,12 +951,15 @@ func (b *Broker) reserveConfigRequest(client *client, original uint32) uint32 {
 
 	for {
 		var buf [4]byte
+		var id uint32
 		if _, err := rand.Read(buf[:]); err != nil {
-			id := uint32(time.Now().UnixNano())
-			b.pendingConfig[id] = configRequest{client: client, originalID: original}
-			return id
+			// crypto/rand is effectively infallible on supported platforms;
+			// degrade to a time-based nonce rather than crashing. Still
+			// respect uniqueness and the "nonzero" invariant below.
+			id = uint32(time.Now().UnixNano())
+		} else {
+			id = binary.BigEndian.Uint32(buf[:])
 		}
-		id := binary.BigEndian.Uint32(buf[:])
 		if id == 0 {
 			continue
 		}
