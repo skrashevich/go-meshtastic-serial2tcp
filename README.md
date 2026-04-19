@@ -1,6 +1,19 @@
 # go-meshtastic-serial2tcp
 
-Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and forwards Meshtastic frames to the configured serial device. Multiple TCP clients can connect simultaneously: the broker owns the single phone↔radio session and serves each TCP client as a "virtual phone", multiplexing broadcasts and answering `want_config_id` from a shared cache so clients don't fight each other for the radio.
+`go-meshtastic-serial2tcp` is a Go-based TCP-to-serial bridge for Meshtastic radios.
+
+It exposes a Meshtastic device connected over USB or another serial interface as a TCP service, so desktop apps, scripts, containers, or remote tools can talk to the radio without owning the serial port directly.
+
+Unlike a naive serial forwarder, this bridge is designed for **multi-client Meshtastic access**: it keeps a single broker-owned phone↔radio session, multiplexes frames to multiple TCP clients, caches config responses, and avoids common reconnect and `want_config_id` conflicts between clients.
+
+## Highlights
+
+- **Meshtastic TCP bridge** for radios connected over a serial port
+- **Multi-client access** with one shared broker session to the radio
+- **Config caching** to reduce client contention and reconnect churn
+- **mDNS discovery** for easier discovery on the local network
+- **Docker-ready** deployment for servers, Raspberry Pi setups, and containerized environments
+- Written in **Go**, with generated protobuf support for Meshtastic frames
 
 ## Requirements
 
