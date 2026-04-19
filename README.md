@@ -1,6 +1,6 @@
 # go-meshtastic-serial2tcp
 
-Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and forwards Meshtastic frames to the configured serial device. Multiple TCP clients can connect. By default all clients are read/write. If you enable read-only mode, the first client is primary (read/write), others are read-only and receive broadcasts (with cached config replies for `want_config_id`).
+Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and forwards Meshtastic frames to the configured serial device. Multiple TCP clients can connect simultaneously: the broker owns the single phone↔radio session and serves each TCP client as a "virtual phone", multiplexing broadcasts and answering `want_config_id` from a shared cache so clients don't fight each other for the radio.
 
 ## Requirements
 
@@ -8,7 +8,7 @@ Small TCP <-> serial bridge for Meshtastic devices. It listens on a TCP port and
 - Access to the serial device (for example `/dev/ttyUSB0` on Linux or `/dev/tty.usb*` on macOS)
 
 ### Building from source
-- Go 1.25+
+- Go 1.26+
 - Git (to clone the repository with submodules)
 
 ### Development (optional, for regenerating protobuf files)
@@ -94,7 +94,7 @@ Environment variables (and matching flags):
 - `TCP_PORT` (default: `4403`) -> `--tcp-port`
 - `RECONNECT_DELAY` (default: `5`, seconds) -> `--reconnect-delay`
 - `MDNS_ENABLED` (default: `true`) -> `--mdns`
-- `READ_ONLY_CLIENTS` (default: `false`) -> `--read-only-clients`
+- `READ_ONLY_CLIENTS` (default: `false`) -> `--read-only-clients` — when `true`, only the primary client may transmit; secondary clients still receive broadcasts and cached config.
 - `SERVICE_NAME` (default: `Meshtastic Serial Bridge (<device>)`) -> `--service-name`
 - `DEBUG` (default: `false`) -> `--debug`
 
@@ -109,6 +109,18 @@ Debug logging:
 ## mDNS discovery
 
 When enabled, the service advertises `_meshtastic._tcp.local.` with details about the serial device and baud rate. If mDNS is not needed or doesn't work in your environment, disable it with `MDNS_ENABLED=false` or `--mdns=false`.
+
+## Multi-client behavior
+
+The broker holds the single phone↔radio session and multiplexes it across all TCP clients. Key semantics:
+
+- **Primary client.** The first client to connect is tracked as primary (used for ordering). If it disconnects, any remaining client is promoted automatically.
+- **`want_config_id` is cache-first.** A client's `want_config_id` is answered from the broker's cache whenever the cache is populated — for both primary and secondary clients. Only a cold start (empty cache) or a post-`rebooted` reset forwards the request to the radio, with a broker-owned nonce. This avoids a loop where every client's `want_config_id` triggered a firmware `rebooted=true` reply that dropped the client before the cache ever filled.
+- **`FromRadio.rebooted=true` is absorbed.** The broker clears its cache and re-issues any in-flight config requests with fresh nonces. The `rebooted` frame is never forwarded to clients, because some client libraries treat it as a teardown signal.
+- **`ToRadio.disconnect` is never forwarded.** The radio session outlives individual TCP clients; forwarding per-client disconnects used to make the firmware reset phone state and reboot on the next `want_config_id`.
+- **Outgoing packets are echoed.** When a client transmits a packet (and `READ_ONLY_CLIENTS=false`, or the sender is primary), the packet is forwarded to the radio and mirrored as a `FromRadio` to *other* connected clients so their UIs stay in sync.
+- **Slow clients are dropped.** `FromRadio` broadcasts use a bounded per-client buffer; a client that can't keep up is disconnected rather than silently losing frames.
+- **Recoverable frame errors.** Invalid frame lengths on the serial link (`ErrInvalidFrame`) are logged and the reader resyncs on the next magic-byte pair instead of tearing down the broker.
 
 ## Development
 
