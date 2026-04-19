@@ -2,6 +2,12 @@
 
 [English version](README.md)
 
+<!-- badges:start -->
+[![GitHub stars](https://img.shields.io/github/stars/skrashevich/go-meshtastic-serial2tcp?style=flat-square)](https://github.com/skrashevich/go-meshtastic-serial2tcp/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/skrashevich/go-meshtastic-serial2tcp?style=flat-square)](https://github.com/skrashevich/go-meshtastic-serial2tcp/commits/main)
+[![License](https://img.shields.io/github/license/skrashevich/go-meshtastic-serial2tcp?style=flat-square)](https://github.com/skrashevich/go-meshtastic-serial2tcp/blob/main/LICENSE)
+<!-- badges:end -->
+
 `go-meshtastic-serial2tcp` — TCP-мост для Meshtastic-радиостанций, подключённых через последовательный порт. Написан на Go.
 
 Приложение подключается к Meshtastic-устройству по USB или другому последовательному интерфейсу и предоставляет к нему доступ по TCP, чтобы десктопные приложения, скрипты, контейнеры и удалённые инструменты могли работать с радио без прямого доступа к порту.
