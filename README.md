@@ -1,4 +1,9 @@
 # go-meshtastic-serial2tcp
+[![Go Report Card](https://img.shields.io/badge/go%20report-A%2B-brightgreen?style=flat&logo=go)](https://goreportcard.com/report/github.com/skrashevich/go-meshtastic-serial2tcp)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/skrashevich/go-meshtastic-serial2tcp.svg)](https://pkg.go.dev/github.com/skrashevich/go-meshtastic-serial2tcp)
+[![GitHub release](https://img.shields.io/github/v/release/skrashevich/go-meshtastic-serial2tcp?include_prereleases)](https://github.com/skrashevich/go-meshtastic-serial2tcp/releases)
+
 
 [Русская версия](README.ru.md)
 
