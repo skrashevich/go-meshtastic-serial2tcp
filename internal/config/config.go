@@ -14,11 +14,16 @@ type Config struct {
 	Device          string
 	Baud            int
 	TCPPort         int
+	HTTPPort        int
+	HTTPEnabled     bool
+	ChannelPSK      string
+	ChannelName     string
 	ReconnectDelay  time.Duration
 	ServiceName     string
 	MDNSEnabled     bool
 	ReadOnlyClients bool
 	Debug           bool
+	Daemon          bool
 }
 
 func Load() (Config, bool) {
@@ -29,6 +34,11 @@ func Load() (Config, bool) {
 	mdnsEnabled := getenvBool("MDNS_ENABLED", true)
 	readOnlyClients := getenvBool("READ_ONLY_CLIENTS", false)
 	debug := getenvBool("DEBUG", false)
+	daemon := getenvBool("DAEMON", false)
+	httpEnabled := getenvBool("HTTP_ENABLED", true)
+	httpPort := getenvInt("HTTP_PORT", 8080)
+	channelPSK := getenv("CHANNEL_PSK", "")
+	channelName := getenv("CHANNEL_NAME", "LongFast")
 	serviceName := getenv("SERVICE_NAME", "")
 
 	healthcheck := flag.Bool("healthcheck", false, "exit 0 if the TCP port is reachable")
@@ -40,7 +50,12 @@ func Load() (Config, bool) {
 	readOnlyClientsFlag := flag.Bool("read-only-clients", readOnlyClients, "make secondary clients read-only (env READ_ONLY_CLIENTS)")
 	debugFlag := flag.Bool("debug", debug, "enable debug logging: protobuf JSON + [config] handshake trace (env DEBUG)")
 	debugShortFlag := flag.Bool("D", false, "shorthand for -debug")
+	httpEnabledFlag := flag.Bool("http", httpEnabled, "enable Meshtastic HTTP API for OpenClaw (env HTTP_ENABLED)")
+	httpPortFlag := flag.Int("http-port", httpPort, "HTTP listen port (env HTTP_PORT)")
+	channelPSKFlag := flag.String("channel-psk", channelPSK, "default channel PSK (base64) for /api/v1/messages (env CHANNEL_PSK)")
+	channelNameFlag := flag.String("channel-name", channelName, "channel name for PSK hash (env CHANNEL_NAME)")
 	serviceNameFlag := flag.String("service-name", serviceName, "mDNS service name (env SERVICE_NAME)")
+	daemonFlag := flag.Bool("d", daemon, "run in background as a daemon (env DAEMON)")
 
 	flag.Parse()
 
@@ -55,6 +70,14 @@ func Load() (Config, bool) {
 	mdnsEnabled = *mdnsEnabledFlag
 	readOnlyClients = *readOnlyClientsFlag
 	debug = *debugFlag || *debugShortFlag
+	daemon = *daemonFlag
+	httpEnabled = *httpEnabledFlag
+	httpPort = normalizePositiveInt("http-port", *httpPortFlag, httpPort)
+	channelPSK = strings.TrimSpace(*channelPSKFlag)
+	channelName = strings.TrimSpace(*channelNameFlag)
+	if channelName == "" {
+		channelName = "LongFast"
+	}
 	serviceName = strings.TrimSpace(*serviceNameFlag)
 	if serviceName == "" {
 		serviceName = fmt.Sprintf("Meshtastic Serial Bridge (%s)", sanitizeDeviceName(device))
@@ -64,11 +87,16 @@ func Load() (Config, bool) {
 		Device:          device,
 		Baud:            baud,
 		TCPPort:         tcpPort,
+		HTTPPort:        httpPort,
+		HTTPEnabled:     httpEnabled,
+		ChannelPSK:      channelPSK,
+		ChannelName:     channelName,
 		ReconnectDelay:  time.Duration(reconnectDelaySeconds) * time.Second,
 		ServiceName:     serviceName,
 		MDNSEnabled:     mdnsEnabled,
 		ReadOnlyClients: readOnlyClients,
 		Debug:           debug,
+		Daemon:          daemon,
 	}, *healthcheck
 }
 
@@ -82,6 +110,9 @@ func PrintBanner(cfg Config, version string) {
 	log.Printf("  Device: %s", cfg.Device)
 	log.Printf("  Baud: %d", cfg.Baud)
 	log.Printf("  TCP Port: %d", cfg.TCPPort)
+	if cfg.HTTPEnabled {
+		log.Printf("  HTTP Port: %d", cfg.HTTPPort)
+	}
 	log.Printf("  Reconnect Delay: %s", cfg.ReconnectDelay)
 	if cfg.ReadOnlyClients {
 		log.Printf("  Read-Only Clients: enabled")

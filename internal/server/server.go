@@ -19,7 +19,7 @@ const (
 	maxRapidFails = 5
 )
 
-func Run(ctx context.Context, cfg config.Config) error {
+func Run(ctx context.Context, cfg config.Config, onBroker func(*broker.Broker)) error {
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.TCPPort)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -91,6 +91,9 @@ func Run(ctx context.Context, cfg config.Config) error {
 		log.Printf("  Connected to: %s @ %dbps", cfg.Device, cfg.Baud)
 
 		b := broker.New(serialConn, cfg.ReadOnlyClients, cfg.Debug)
+		if onBroker != nil {
+			onBroker(b)
+		}
 		brokerMu.Lock()
 		current = b
 		brokerMu.Unlock()
@@ -113,6 +116,9 @@ func Run(ctx context.Context, cfg config.Config) error {
 		brokerMu.Lock()
 		current = nil
 		brokerMu.Unlock()
+		if onBroker != nil {
+			onBroker(nil)
+		}
 		b.CloseAll()
 		_ = serialConn.Close()
 
