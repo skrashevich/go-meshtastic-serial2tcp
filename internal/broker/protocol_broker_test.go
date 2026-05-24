@@ -261,6 +261,178 @@ func TestProtocolBrokerPacketBroadcastExcludesSender(t *testing.T) {
 	}
 }
 
+func TestProtocolBrokerRadioEchoExcludesSender(t *testing.T) {
+	radioSide, brokerSide := net.Pipe()
+	defer radioSide.Close()
+	defer brokerSide.Close()
+
+	broker := New(brokerSide, false, false)
+	go func() {
+		reader := bufio.NewReader(radioSide)
+		for {
+			if _, err := frame.ReadFrame(reader); err != nil {
+				return
+			}
+		}
+	}()
+	errCh := make(chan error, 1)
+	go broker.readSerial(errCh)
+
+	sender, _ := newTestClient()
+	peerClient, _ := newTestClient()
+	broker.clientsMu.Lock()
+	broker.clients[sender] = struct{}{}
+	broker.clients[peerClient] = struct{}{}
+	broker.primary = sender
+	broker.clientsMu.Unlock()
+
+	testPacket := &meshtasticpb.MeshPacket{
+		From: 123456,
+		To:   789012,
+		Id:   99,
+		PayloadVariant: &meshtasticpb.MeshPacket_Decoded{
+			Decoded: &meshtasticpb.Data{
+				Portnum: meshtasticpb.PortNum_TEXT_MESSAGE_APP,
+				Payload: []byte("hi"),
+			},
+		},
+	}
+	toRadio := &meshtasticpb.ToRadio{
+		PayloadVariant: &meshtasticpb.ToRadio_Packet{Packet: testPacket},
+	}
+	payload, err := proto.Marshal(toRadio)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	broker.handleClientPayload(sender, payload)
+
+	echo := &meshtasticpb.FromRadio{
+		PayloadVariant: &meshtasticpb.FromRadio_Packet{Packet: testPacket},
+	}
+	echoPayload, err := proto.Marshal(echo)
+	if err != nil {
+		t.Fatalf("marshal echo: %v", err)
+	}
+	if err := frame.WriteFrame(radioSide, echoPayload); err != nil {
+		t.Fatalf("write radio echo: %v", err)
+	}
+
+	recvPayload(t, peerClient.send)
+	select {
+	case got := <-peerClient.send:
+		t.Fatalf("peer must not receive duplicate radio echo, got %d bytes", len(got))
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	select {
+	case got := <-sender.send:
+		t.Fatalf("sender must not receive radio echo, got %d bytes", len(got))
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestProtocolBrokerAdminRadioEchoDeliveredToSender(t *testing.T) {
+	radioSide, brokerSide := net.Pipe()
+	defer radioSide.Close()
+	defer brokerSide.Close()
+
+	broker := New(brokerSide, false, false)
+	go func() {
+		reader := bufio.NewReader(radioSide)
+		for {
+			if _, err := frame.ReadFrame(reader); err != nil {
+				return
+			}
+		}
+	}()
+	errCh := make(chan error, 1)
+	go broker.readSerial(errCh)
+
+	sender, _ := newTestClient()
+	peerClient, _ := newTestClient()
+	broker.clientsMu.Lock()
+	broker.clients[sender] = struct{}{}
+	broker.clients[peerClient] = struct{}{}
+	broker.primary = sender
+	broker.clientsMu.Unlock()
+
+	request := &meshtasticpb.MeshPacket{
+		From: 123456,
+		To:   0,
+		Id:   101,
+		PayloadVariant: &meshtasticpb.MeshPacket_Decoded{
+			Decoded: &meshtasticpb.Data{
+				Portnum: meshtasticpb.PortNum_ADMIN_APP,
+				Payload: mustMarshal(t, &meshtasticpb.AdminMessage{
+					PayloadVariant: &meshtasticpb.AdminMessage_GetChannelRequest{
+						GetChannelRequest: 0,
+					},
+				}),
+			},
+		},
+	}
+	toRadio := &meshtasticpb.ToRadio{
+		PayloadVariant: &meshtasticpb.ToRadio_Packet{Packet: request},
+	}
+	payload, err := proto.Marshal(toRadio)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	broker.handleClientPayload(sender, payload)
+
+	response := &meshtasticpb.FromRadio{
+		PayloadVariant: &meshtasticpb.FromRadio_Packet{
+			Packet: &meshtasticpb.MeshPacket{
+				From: 123456,
+				To:   0,
+				Id:   101,
+				PayloadVariant: &meshtasticpb.MeshPacket_Decoded{
+					Decoded: &meshtasticpb.Data{
+						Portnum: meshtasticpb.PortNum_ADMIN_APP,
+						Payload: mustMarshal(t, &meshtasticpb.AdminMessage{
+							PayloadVariant: &meshtasticpb.AdminMessage_GetChannelResponse{
+								GetChannelResponse: &meshtasticpb.Channel{Index: 0},
+							},
+						}),
+					},
+				},
+			},
+		},
+	}
+	echoPayload, err := proto.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal echo: %v", err)
+	}
+	if err := frame.WriteFrame(radioSide, echoPayload); err != nil {
+		t.Fatalf("write radio echo: %v", err)
+	}
+
+	recvPayload(t, peerClient.send)
+	select {
+	case got := <-peerClient.send:
+		t.Fatalf("peer must not receive duplicate radio echo, got %d bytes", len(got))
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	got := recvPayload(t, sender.send)
+	fr := &meshtasticpb.FromRadio{}
+	if err := proto.Unmarshal(got, fr); err != nil {
+		t.Fatalf("sender echo unmarshal: %v", err)
+	}
+	if fr.GetPacket().GetId() != 101 {
+		t.Fatalf("sender must receive admin radio echo, got packet id=%d", fr.GetPacket().GetId())
+	}
+}
+
+func mustMarshal(t *testing.T, msg proto.Message) []byte {
+	t.Helper()
+	b, err := proto.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
+}
+
 func TestProtocolBrokerSecondaryPacketForwardsWhenReadOnlyFalse(t *testing.T) {
 	serialR, serialW, err := os.Pipe()
 	if err != nil {

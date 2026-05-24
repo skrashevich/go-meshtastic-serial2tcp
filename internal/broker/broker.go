@@ -282,6 +282,13 @@ type configRequest struct {
 	originalID uint32
 }
 
+const outboundEchoSuppress = 30 * time.Second
+
+type outboundEntry struct {
+	client *client
+	until  time.Time
+}
+
 type Broker struct {
 	// serial is the device-side endpoint. The concrete type is usually
 	// *os.File opened by the serial package, but any io.ReadWriter works —
@@ -299,9 +306,47 @@ type Broker struct {
 	pendingMu     sync.Mutex
 	pendingConfig map[uint32]configRequest
 
+	outboundMu       sync.Mutex
+	outboundByPacket map[uint32]outboundEntry
+
 	done    chan struct{}
 	errOnce sync.Once
 	err     error
+}
+
+func (b *Broker) noteOutboundPacket(cl *client, pkt *meshtasticpb.MeshPacket) {
+	if pkt == nil || pkt.GetId() == 0 {
+		return
+	}
+	b.outboundMu.Lock()
+	defer b.outboundMu.Unlock()
+	now := time.Now()
+	for id, entry := range b.outboundByPacket {
+		if now.After(entry.until) {
+			delete(b.outboundByPacket, id)
+		}
+	}
+	b.outboundByPacket[pkt.GetId()] = outboundEntry{
+		client: cl,
+		until:  now.Add(outboundEchoSuppress),
+	}
+}
+
+func (b *Broker) consumeOutboundOrigin(pkt *meshtasticpb.MeshPacket) *client {
+	if pkt == nil || pkt.GetId() == 0 {
+		return nil
+	}
+	b.outboundMu.Lock()
+	defer b.outboundMu.Unlock()
+	entry, ok := b.outboundByPacket[pkt.GetId()]
+	if !ok {
+		return nil
+	}
+	delete(b.outboundByPacket, pkt.GetId())
+	if time.Now().After(entry.until) || entry.client == nil || entry.client.isClosed() {
+		return nil
+	}
+	return entry.client
 }
 
 func New(serial io.ReadWriter, readOnlyClients bool, debug bool) *Broker {
@@ -312,6 +357,7 @@ func New(serial io.ReadWriter, readOnlyClients bool, debug bool) *Broker {
 		readOnlyClients: readOnlyClients,
 		debug:           debug,
 		pendingConfig:   make(map[uint32]configRequest),
+		outboundByPacket: make(map[uint32]outboundEntry),
 		done:            make(chan struct{}),
 	}
 }
@@ -414,6 +460,31 @@ func extractMeshPacket(msg proto.Message) *meshtasticpb.MeshPacket {
 		return m.GetPacket()
 	default:
 		return nil
+	}
+}
+
+// packetSuppressesOriginEcho reports whether the radio's echo of an outbound
+// MeshPacket should be withheld from the client that sent it. Chat-style apps
+// already show the user's message locally; suppressing the echo avoids a
+// duplicate in the sender's UI. Admin and other request/response ports must
+// still receive the radio-processed echo (ACK, errors, updated payloads).
+func packetSuppressesOriginEcho(pkt *meshtasticpb.MeshPacket) bool {
+	if pkt == nil {
+		return false
+	}
+	data := pkt.GetDecoded()
+	if data == nil {
+		// Encrypted or opaque payloads: deliver the echo so config/admin
+		// sessions are not left waiting for a reply that never arrives.
+		return false
+	}
+	switch data.GetPortnum() {
+	case meshtasticpb.PortNum_TEXT_MESSAGE_APP,
+		meshtasticpb.PortNum_TEXT_MESSAGE_COMPRESSED_APP,
+		meshtasticpb.PortNum_REPLY_APP:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -600,6 +671,18 @@ func (b *Broker) readSerial(errCh chan<- error) {
 		if b.routeFromRadio(msg, payload) {
 			continue
 		}
+		if pkt := msg.GetPacket(); pkt != nil {
+			if origin := b.consumeOutboundOrigin(pkt); origin != nil {
+				// Radio echo of a client-originated packet. Chat ports are
+				// suppressed for the sender (synthetic echo already went to
+				// peers); admin and other RPC-style ports must reach the sender
+				// with the firmware's processed reply.
+				if !packetSuppressesOriginEcho(pkt) {
+					b.sendToClient(origin, payload)
+				}
+				continue
+			}
+		}
 		b.broadcast(payload)
 	}
 }
@@ -785,6 +868,7 @@ func (b *Broker) handleClientPayload(cl *client, payload []byte) {
 				b.fail(err)
 				return
 			}
+			b.noteOutboundPacket(cl, v.Packet)
 			// Echo the outgoing packet to the other clients as a FromRadio
 			// so their UI stays in sync with what was transmitted. The
 			// sender is excluded to avoid a loopback the app would render
