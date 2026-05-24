@@ -289,6 +289,8 @@ type outboundEntry struct {
 	until  time.Time
 }
 
+type FromRadioObserver func(frame *meshtasticpb.FromRadio, raw []byte)
+
 type Broker struct {
 	// serial is the device-side endpoint. The concrete type is usually
 	// *os.File opened by the serial package, but any io.ReadWriter works —
@@ -308,6 +310,9 @@ type Broker struct {
 
 	outboundMu       sync.Mutex
 	outboundByPacket map[uint32]outboundEntry
+
+	observerMu sync.RWMutex
+	observer   FromRadioObserver
 
 	done    chan struct{}
 	errOnce sync.Once
@@ -347,6 +352,21 @@ func (b *Broker) consumeOutboundOrigin(pkt *meshtasticpb.MeshPacket) *client {
 		return nil
 	}
 	return entry.client
+}
+
+func (b *Broker) SetFromRadioObserver(fn FromRadioObserver) {
+	b.observerMu.Lock()
+	defer b.observerMu.Unlock()
+	b.observer = fn
+}
+
+func (b *Broker) notifyObserver(frame *meshtasticpb.FromRadio, raw []byte) {
+	b.observerMu.RLock()
+	fn := b.observer
+	b.observerMu.RUnlock()
+	if fn != nil {
+		fn(frame, raw)
+	}
 }
 
 func New(serial io.ReadWriter, readOnlyClients bool, debug bool) *Broker {
@@ -668,6 +688,7 @@ func (b *Broker) readSerial(errCh chan<- error) {
 		if label := cacheUpdateLabel(msg); label != "" {
 			b.logConfig("cache store %s (%s)", label, b.cache.describe())
 		}
+		b.notifyObserver(msg, payload)
 		if b.routeFromRadio(msg, payload) {
 			continue
 		}
