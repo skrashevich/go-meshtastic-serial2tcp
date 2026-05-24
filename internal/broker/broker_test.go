@@ -45,6 +45,26 @@ func TestInjectDecodedPayloadJSON(t *testing.T) {
 	}
 }
 
+func TestConfigCacheReady(t *testing.T) {
+	cache := newConfigCache()
+	if cache.ready() {
+		t.Fatalf("expected empty cache to be not ready")
+	}
+
+	cache.update(&meshtasticpb.FromRadio{PayloadVariant: &meshtasticpb.FromRadio_NodeInfo{NodeInfo: &meshtasticpb.NodeInfo{Num: 1}}}, []byte("node"))
+	if cache.empty() {
+		t.Fatalf("expected nodeInfo-only cache to be non-empty")
+	}
+	if cache.ready() {
+		t.Fatalf("nodeInfo alone must not mark cache ready")
+	}
+
+	cache.update(&meshtasticpb.FromRadio{PayloadVariant: &meshtasticpb.FromRadio_MyInfo{MyInfo: &meshtasticpb.MyNodeInfo{}}}, []byte("my"))
+	if !cache.ready() {
+		t.Fatalf("expected cache with myInfo to be ready")
+	}
+}
+
 func TestConfigCacheUpdateSnapshot(t *testing.T) {
 	cache := newConfigCache()
 	if !cache.empty() {

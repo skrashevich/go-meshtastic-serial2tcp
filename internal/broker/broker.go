@@ -255,6 +255,16 @@ func (c *configCache) empty() bool {
 		len(c.moduleConfig) == 0 && len(c.channels) == 0 && c.metadata == nil && c.deviceUI == nil
 }
 
+// ready reports whether the cache holds a complete device config dump.
+// NodeInfo alone can arrive from live mesh traffic before the initial
+// WantConfigId handshake finishes; serving that partial state breaks
+// clients waiting for myInfo/channels (--info, --get 0, etc.).
+func (c *configCache) ready() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.myInfo != nil
+}
+
 func (c *configCache) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -727,7 +737,7 @@ func (b *Broker) handleClientPayload(cl *client, payload []byte) {
 		// every client's WantConfigId made the firmware reply with just
 		// rebooted=true, which dropped the client and never populated the
 		// cache. The wire is only hit on a cold start or after rebooted.
-		if b.cache.empty() {
+		if !b.cache.ready() {
 			// If this client already has an in-flight config request, drop
 			// it: reserving a new nonce without clearing the old one would
 			// leave a ghost entry in pendingConfig that only gets cleaned
