@@ -163,7 +163,7 @@ services:
 | `MDNS_ENABLED` | `true` | `--mdns` | Включить mDNS-анонсирование |
 | `READ_ONLY_CLIENTS` | `false` | `--read-only-clients` | Режим «только чтение» для неосновных клиентов |
 | `SERVICE_NAME` | `Meshtastic Serial Bridge (<device>)` | `--service-name` | Имя mDNS-сервиса |
-| `DEBUG` | `false` | `--debug` | Отладочный вывод |
+| `DEBUG` | `false` | `--debug`, `-D` | Отладочный вывод protobuf + `[config]` |
 
 Проверка здоровья:
 
@@ -171,7 +171,7 @@ services:
 
 Отладочный вывод:
 
-- Включается через `DEBUG=true` или `--debug`. Показывает подробности протокола в логах. Полезен для диагностики, но может быть многословным.
+- Включается через `DEBUG=true`, `--debug` или `-D`. JSON protobuf на проводе и строки `[config]` с `WantConfigId` / `ConfigCompleteId`, кэшем и переписыванием nonce. Полезен для отладки handshake, но шумный.
 
 ## Обнаружение через mDNS
 

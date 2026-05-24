@@ -387,6 +387,10 @@ func (b *Broker) logDecodedPayload(direction, addr string, payload []byte, kind 
 	if addr != "" {
 		label = fmt.Sprintf("%s [%s]", direction, addr)
 	}
+	variant := protoVariantLabel(msg)
+	if variant != "" {
+		label = fmt.Sprintf("%s <%s>", label, variant)
+	}
 	log.Printf("%s decoded: %s%s", label, decoded, truncated)
 }
 
@@ -590,6 +594,9 @@ func (b *Broker) readSerial(errCh chan<- error) {
 		}
 
 		b.cache.update(msg, payload)
+		if label := cacheUpdateLabel(msg); label != "" {
+			b.logConfig("cache store %s (%s)", label, b.cache.describe())
+		}
 		if b.routeFromRadio(msg, payload) {
 			continue
 		}
@@ -618,6 +625,7 @@ func (b *Broker) routeFromRadio(frame *meshtasticpb.FromRadio, payload []byte) b
 // WantConfigId so the firmware starts sending the config dump instead of
 // sitting idle after the rebooted notification.
 func (b *Broker) handleRebooted() {
+	b.logConfig("radio rebooted=true; clearing cache and re-issuing pending config requests")
 	log.Printf("Radio sent rebooted=true; clearing cache and re-issuing pending config requests")
 	b.cache.reset()
 
@@ -631,6 +639,8 @@ func (b *Broker) handleRebooted() {
 			continue
 		}
 		newID := b.reserveConfigRequest(req.client, req.originalID)
+		b.logConfig("rebooted re-issue WantConfigId client=%s original=0x%x wire=0x%x",
+			req.client.addr, req.originalID, newID)
 		toRadio := &meshtasticpb.ToRadio{
 			PayloadVariant: &meshtasticpb.ToRadio_WantConfigId{WantConfigId: newID},
 		}
@@ -649,9 +659,13 @@ func (b *Broker) handleConfigComplete(id uint32, payload []byte) {
 		// it would deliver a complete-id that no remaining client actually
 		// asked for (the id in the payload is our rewritten random one, not
 		// any client's original). Drop silently.
+		b.logConfig("ConfigCompleteId from radio wire=0x%x: no pending request (dropped)", id)
 		log.Printf("Dropping ConfigCompleteId without pending request: id=%d", id)
 		return
 	}
+
+	b.logConfig("ConfigCompleteId from radio wire=0x%x -> client=%s original=0x%x",
+		id, req.client.addr, req.originalID)
 
 	response := &meshtasticpb.FromRadio{
 		PayloadVariant: &meshtasticpb.FromRadio_ConfigCompleteId{
@@ -663,6 +677,7 @@ func (b *Broker) handleConfigComplete(id uint32, payload []byte) {
 		return
 	}
 	b.sendToClient(req.client, data)
+	b.logConfig("sent ConfigCompleteId to client=%s original=0x%x", req.client.addr, req.originalID)
 }
 
 func (b *Broker) AddClient(conn net.Conn) {
@@ -733,6 +748,7 @@ func (b *Broker) handleClientPayload(cl *client, payload []byte) {
 
 	switch v := toRadio.GetPayloadVariant().(type) {
 	case *meshtasticpb.ToRadio_WantConfigId:
+		originalID := v.WantConfigId
 		// Cache-first regardless of primary/secondary. Re-handshaking on
 		// every client's WantConfigId made the firmware reply with just
 		// rebooted=true, which dropped the client and never populated the
@@ -744,13 +760,17 @@ func (b *Broker) handleClientPayload(cl *client, payload []byte) {
 			// up when the client disconnects, leaking memory across client
 			// retries.
 			b.dropPendingForClient(cl)
-			newID := b.reserveConfigRequest(cl, v.WantConfigId)
+			newID := b.reserveConfigRequest(cl, originalID)
+			b.logConfig("WantConfigId client=%s primary=%v cache=miss original=0x%x wire=0x%x",
+				cl.addr, primary, originalID, newID)
 			v.WantConfigId = newID
 			if err := b.forwardToSerial(toRadio); err != nil {
 				b.fail(err)
 			}
 		} else {
-			b.sendCachedConfig(cl, v.WantConfigId)
+			b.logConfig("WantConfigId client=%s primary=%v cache=hit original=0x%x cache=%s",
+				cl.addr, primary, originalID, b.cache.describe())
+			b.sendCachedConfig(cl, originalID)
 		}
 	case *meshtasticpb.ToRadio_Disconnect:
 		// Per-client TCP disconnects are never forwarded to the radio:
@@ -1002,7 +1022,12 @@ func (b *Broker) dropPendingForClient(cl *client) {
 func (b *Broker) sendCachedConfig(client *client, requestID uint32) {
 	snap := b.cache.snapshot()
 	if b.cache.empty() {
+		b.logConfig("sendCachedConfig client=%s requestID=0x%x: cache empty, config_complete only",
+			client.addr, requestID)
 		log.Printf("Config cache empty; replying with config_complete_id only")
+	} else {
+		b.logConfig("sendCachedConfig client=%s requestID=0x%x snapshot=%s",
+			client.addr, requestID, describeCacheSnapshot(snap))
 	}
 
 	if len(snap.myInfo) > 0 {
@@ -1051,4 +1076,5 @@ func (b *Broker) sendCachedConfig(client *client, requestID uint32) {
 		return
 	}
 	b.sendToClientBlocking(client, data)
+	b.logConfig("sendCachedConfig client=%s done ConfigCompleteId=0x%x", client.addr, requestID)
 }

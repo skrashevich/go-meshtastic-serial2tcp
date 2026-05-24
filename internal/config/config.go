@@ -38,7 +38,8 @@ func Load() (Config, bool) {
 	reconnectDelayFlag := flag.Int("reconnect-delay", reconnectDelaySeconds, "seconds to wait before reconnect (env RECONNECT_DELAY)")
 	mdnsEnabledFlag := flag.Bool("mdns", mdnsEnabled, "enable mDNS discovery (env MDNS_ENABLED)")
 	readOnlyClientsFlag := flag.Bool("read-only-clients", readOnlyClients, "make secondary clients read-only (env READ_ONLY_CLIENTS)")
-	debugFlag := flag.Bool("debug", debug, "enable debug logging (env DEBUG)")
+	debugFlag := flag.Bool("debug", debug, "enable debug logging: protobuf JSON + [config] handshake trace (env DEBUG)")
+	debugShortFlag := flag.Bool("D", false, "shorthand for -debug")
 	serviceNameFlag := flag.String("service-name", serviceName, "mDNS service name (env SERVICE_NAME)")
 
 	flag.Parse()
@@ -53,7 +54,7 @@ func Load() (Config, bool) {
 	reconnectDelaySeconds = normalizePositiveInt("reconnect-delay", *reconnectDelayFlag, reconnectDelaySeconds)
 	mdnsEnabled = *mdnsEnabledFlag
 	readOnlyClients = *readOnlyClientsFlag
-	debug = *debugFlag
+	debug = *debugFlag || *debugShortFlag
 	serviceName = strings.TrimSpace(*serviceNameFlag)
 	if serviceName == "" {
 		serviceName = fmt.Sprintf("Meshtastic Serial Bridge (%s)", sanitizeDeviceName(device))
@@ -86,7 +87,7 @@ func PrintBanner(cfg Config, version string) {
 		log.Printf("  Read-Only Clients: enabled")
 	}
 	if cfg.Debug {
-		log.Printf("  Debug Logging: enabled")
+		log.Printf("  Debug Logging: enabled (protobuf decode + [config] WantConfigId/ConfigCompleteId)")
 	}
 }
 

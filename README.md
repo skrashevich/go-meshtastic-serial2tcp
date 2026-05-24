@@ -163,7 +163,7 @@ Environment variables (and matching flags):
 - `MDNS_ENABLED` (default: `true`) -> `--mdns`
 - `READ_ONLY_CLIENTS` (default: `false`) -> `--read-only-clients` — when `true`, only the primary client may transmit; secondary clients still receive broadcasts and cached config.
 - `SERVICE_NAME` (default: `Meshtastic Serial Bridge (<device>)`) -> `--service-name`
-- `DEBUG` (default: `false`) -> `--debug`
+- `DEBUG` (default: `false`) -> `--debug` or `-D`
 
 Healthcheck:
 
@@ -171,7 +171,7 @@ Healthcheck:
 
 Debug logging:
 
-- Enable with `DEBUG=true` or `--debug` to get extra protocol details in logs (useful for troubleshooting; can be noisy).
+- Enable with `DEBUG=true`, `--debug`, or `-D` for protobuf JSON on the wire plus `[config]` lines tracing `WantConfigId`, `ConfigCompleteId`, cache hits/misses, and nonce rewriting (useful for handshake debugging; noisy).
 
 ## mDNS discovery
 
