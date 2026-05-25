@@ -75,47 +75,32 @@ func protoVariantLabel(msg proto.Message) string {
 
 func cacheUpdateLabel(frame *meshtasticpb.FromRadio) string {
 	switch frame.GetPayloadVariant().(type) {
-	case *meshtasticpb.FromRadio_MyInfo:
-		return "MyInfo"
-	case *meshtasticpb.FromRadio_NodeInfo:
-		if n := frame.GetNodeInfo(); n != nil {
-			return fmt.Sprintf("NodeInfo num=0x%x", n.GetNum())
-		}
-		return "NodeInfo"
-	case *meshtasticpb.FromRadio_Config:
-		if c := frame.GetConfig(); c != nil {
-			return fmt.Sprintf("Config %T", c.GetPayloadVariant())
-		}
-		return "Config"
-	case *meshtasticpb.FromRadio_ModuleConfig:
-		if c := frame.GetModuleConfig(); c != nil {
-			return fmt.Sprintf("ModuleConfig %T", c.GetPayloadVariant())
-		}
-		return "ModuleConfig"
-	case *meshtasticpb.FromRadio_Channel:
-		if ch := frame.GetChannel(); ch != nil {
-			return fmt.Sprintf("Channel index=%d", ch.GetIndex())
-		}
-		return "Channel"
-	case *meshtasticpb.FromRadio_Metadata:
-		return "Metadata"
-	case *meshtasticpb.FromRadio_DeviceuiConfig:
-		return "DeviceuiConfig"
+	case *meshtasticpb.FromRadio_MyInfo,
+		*meshtasticpb.FromRadio_NodeInfo,
+		*meshtasticpb.FromRadio_Config,
+		*meshtasticpb.FromRadio_ModuleConfig,
+		*meshtasticpb.FromRadio_Channel,
+		*meshtasticpb.FromRadio_Metadata,
+		*meshtasticpb.FromRadio_DeviceuiConfig:
+		return protoVariantLabel(frame)
 	default:
 		return ""
 	}
 }
 
+func formatCacheStats(myInfo bool, configs, moduleConfigs, channels, nodeInfo int, metadata, deviceUI bool) string {
+	return fmt.Sprintf("myInfo=%t configs=%d moduleConfigs=%d channels=%d nodeInfo=%d metadata=%t deviceUI=%t",
+		myInfo, configs, moduleConfigs, channels, nodeInfo, metadata, deviceUI)
+}
+
 func (c *configCache) describe() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return fmt.Sprintf("myInfo=%t configs=%d moduleConfigs=%d channels=%d nodeInfo=%d metadata=%t deviceUI=%t",
-		c.myInfo != nil, len(c.config), len(c.moduleConfig), len(c.channels), len(c.nodeInfo),
+	return formatCacheStats(c.myInfo != nil, len(c.config), len(c.moduleConfig), len(c.channels), len(c.nodeInfo),
 		c.metadata != nil, c.deviceUI != nil)
 }
 
 func describeCacheSnapshot(snap cacheSnapshot) string {
-	return fmt.Sprintf("myInfo=%t configs=%d moduleConfigs=%d channels=%d nodeInfo=%d metadata=%t deviceUI=%t",
-		len(snap.myInfo) > 0, len(snap.configs), len(snap.moduleConfig), len(snap.channels), len(snap.nodeInfo),
+	return formatCacheStats(len(snap.myInfo) > 0, len(snap.configs), len(snap.moduleConfig), len(snap.channels), len(snap.nodeInfo),
 		len(snap.metadata) > 0, len(snap.deviceUI) > 0)
 }

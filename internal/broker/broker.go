@@ -708,7 +708,6 @@ func (b *Broker) routeFromRadio(frame *meshtasticpb.FromRadio, payload []byte) b
 // WantConfigId so the firmware starts sending the config dump instead of
 // sitting idle after the rebooted notification.
 func (b *Broker) handleRebooted() {
-	b.logConfig("radio rebooted=true; clearing cache and re-issuing pending config requests")
 	log.Printf("Radio sent rebooted=true; clearing cache and re-issuing pending config requests")
 	b.cache.reset()
 
@@ -742,7 +741,6 @@ func (b *Broker) handleConfigComplete(id uint32, payload []byte) {
 		// it would deliver a complete-id that no remaining client actually
 		// asked for (the id in the payload is our rewritten random one, not
 		// any client's original). Drop silently.
-		b.logConfig("ConfigCompleteId from radio wire=0x%x: no pending request (dropped)", id)
 		log.Printf("Dropping ConfigCompleteId without pending request: id=%d", id)
 		return
 	}
@@ -884,16 +882,16 @@ func (b *Broker) handleClientPayload(cl *client, payload []byte) {
 				return
 			}
 			b.broadcastExcept(broadcastPayload, cl)
-		} else if cl.markReadOnlyWarning() {
-			log.Printf("Ignoring packet from read-only client: %s", cl.addr)
+		} else {
+			b.warnReadOnlyClient(cl)
 		}
 	default:
 		if primary || !b.readOnlyClients {
 			if err := b.forwardToSerial(toRadio); err != nil {
 				b.fail(err)
 			}
-		} else if cl.markReadOnlyWarning() {
-			log.Printf("Ignoring request from read-only client: %s", cl.addr)
+		} else {
+			b.warnReadOnlyClient(cl)
 		}
 	}
 }
@@ -941,11 +939,13 @@ func (b *Broker) broadcastExcept(payload []byte, except *client) {
 // so the app can reconnect and resync from cache. Silent frame-dropping is
 // avoided because it leaves the client's state quietly out of sync with the
 // radio.
-func (b *Broker) sendToClient(cl *client, payload []byte) {
-	if ok := cl.enqueue(payload); ok {
-		b.logDecodedPayload("broker -> client", cl.addr, payload, payloadFromRadio)
-		return
+func (b *Broker) warnReadOnlyClient(cl *client) {
+	if cl.markReadOnlyWarning() {
+		log.Printf("Ignoring traffic from read-only client: %s", cl.addr)
 	}
+}
+
+func (b *Broker) disconnectSlowClient(cl *client) {
 	if cl.isClosed() {
 		return
 	}
@@ -953,6 +953,14 @@ func (b *Broker) sendToClient(cl *client, payload []byte) {
 		log.Printf("Client too slow, disconnecting: %s", cl.addr)
 	}
 	b.removeClient(cl)
+}
+
+func (b *Broker) sendToClient(cl *client, payload []byte) {
+	if ok := cl.enqueue(payload); ok {
+		b.logDecodedPayload("broker -> client", cl.addr, payload, payloadFromRadio)
+		return
+	}
+	b.disconnectSlowClient(cl)
 }
 
 // sendToClientBlocking enqueues payload with a per-message timeout. It is
@@ -963,13 +971,7 @@ func (b *Broker) sendToClientBlocking(cl *client, payload []byte) bool {
 		b.logDecodedPayload("broker -> client", cl.addr, payload, payloadFromRadio)
 		return true
 	}
-	if cl.isClosed() {
-		return false
-	}
-	if cl.markSlowWarning() {
-		log.Printf("Client too slow, disconnecting: %s", cl.addr)
-	}
-	b.removeClient(cl)
+	b.disconnectSlowClient(cl)
 	return false
 }
 
@@ -1047,14 +1049,7 @@ func (b *Broker) removeClient(cl *client) {
 }
 
 func (b *Broker) CloseAll() {
-	b.clientsMu.RLock()
-	clients := make([]*client, 0, len(b.clients))
-	for client := range b.clients {
-		clients = append(clients, client)
-	}
-	b.clientsMu.RUnlock()
-
-	for _, client := range clients {
+	for _, client := range b.snapshotClients() {
 		b.removeClient(client)
 	}
 }
@@ -1106,9 +1101,7 @@ func (b *Broker) dropPendingForClient(cl *client) {
 func (b *Broker) sendCachedConfig(client *client, requestID uint32) {
 	snap := b.cache.snapshot()
 	if b.cache.empty() {
-		b.logConfig("sendCachedConfig client=%s requestID=0x%x: cache empty, config_complete only",
-			client.addr, requestID)
-		log.Printf("Config cache empty; replying with config_complete_id only")
+		log.Printf("Config cache empty; replying with config_complete_id only for %s", client.addr)
 	} else {
 		b.logConfig("sendCachedConfig client=%s requestID=0x%x snapshot=%s",
 			client.addr, requestID, describeCacheSnapshot(snap))
