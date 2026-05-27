@@ -52,11 +52,11 @@ The broker sits between the physical Meshtastic radio and multiple TCP clients. 
 
 Starting with **v0.2.0**, the bridge includes an optional built-in web interface for sending and receiving mesh messages, browsing channels, and monitoring radio activity.
 
-![Web UI — Chat view](docs/webui-chat.png)
-*Chat interface — send and receive mesh messages in real-time*
+![Web UI - Chat view](docs/webui-chat.png)
+*Chat interface - send and receive mesh messages in real-time*
 
-![Web UI — Channels view](docs/webui-channels.png)
-*Channel browser — list and navigate radio channels, each with role and index*
+![Web UI - Channels view](docs/webui-channels.png)
+*Channel browser - list and navigate radio channels, each with role and index*
 
 Enable it with the `--webui` flag or `WEBUI_ENABLED=true` environment variable:
 
@@ -169,10 +169,25 @@ services:
       - /dev/ttyUSB0:/dev/ttyUSB0
 ```
 
+With Web UI enabled:
+
+```bash
+docker run --rm \
+  --device /dev/ttyUSB0 \
+  -p 4403:4403 \
+  -p 8080:8080 \
+  -e SERIAL_DEVICE=/dev/ttyUSB0 \
+  -e BAUD_RATE=115200 \
+  -e TCP_PORT=4403 \
+  -e WEBUI_ENABLED=true \
+  -e WEBUI_ADDR=:8080 \
+  ghcr.io/skrashevich/go-meshtastic-serial2tcp:latest
+```
+
 Notes:
 
 - For mDNS on Linux, you may need `--network host` so multicast announcements reach your LAN. If not required, set `-e MDNS_ENABLED=false`.
-- If the container can’t open the serial device, ensure the device is passed through and that permissions allow access.
+- If the container can't open the serial device, ensure the device is passed through and that permissions allow access.
 
 
 ## Configuration
@@ -184,8 +199,10 @@ Environment variables (and matching flags):
 - `TCP_PORT` (default: `4403`) -> `--tcp-port`
 - `RECONNECT_DELAY` (default: `5`, seconds) -> `--reconnect-delay`
 - `MDNS_ENABLED` (default: `true`) -> `--mdns`
-- `READ_ONLY_CLIENTS` (default: `false`) -> `--read-only-clients` — when `true`, only the primary client may transmit; secondary clients still receive broadcasts and cached config.
+- `READ_ONLY_CLIENTS` (default: `false`) -> `--read-only-clients` - when `true`, only the primary client may transmit; secondary clients still receive broadcasts and cached config.
 - `SERVICE_NAME` (default: `Meshtastic Serial Bridge (<device>)`) -> `--service-name`
+- `WEBUI_ENABLED` (default: `false`) -> `--webui`
+- `WEBUI_ADDR` (default: `:8080`) -> `--webui-addr`
 - `DEBUG` (default: `false`) -> `--debug` or `-D`
 
 Healthcheck:
@@ -205,7 +222,7 @@ When enabled, the service advertises `_meshtastic._tcp.local.` with details abou
 The broker holds the single phone↔radio session and multiplexes it across all TCP clients. Key semantics:
 
 - **Primary client.** The first client to connect is tracked as primary (used for ordering). If it disconnects, any remaining client is promoted automatically.
-- **`want_config_id` is cache-first.** A client's `want_config_id` is answered from the broker's cache whenever the cache is populated — for both primary and secondary clients. Only a cold start (empty cache) or a post-`rebooted` reset forwards the request to the radio, with a broker-owned nonce. This avoids a loop where every client's `want_config_id` triggered a firmware `rebooted=true` reply that dropped the client before the cache ever filled.
+- **`want_config_id` is cache-first.** A client's `want_config_id` is answered from the broker's cache whenever the cache is populated - for both primary and secondary clients. Only a cold start (empty cache) or a post-`rebooted` reset forwards the request to the radio, with a broker-owned nonce. This avoids a loop where every client's `want_config_id` triggered a firmware `rebooted=true` reply that dropped the client before the cache ever filled.
 - **`FromRadio.rebooted=true` is absorbed.** The broker clears its cache and re-issues any in-flight config requests with fresh nonces. The `rebooted` frame is never forwarded to clients, because some client libraries treat it as a teardown signal.
 - **`ToRadio.disconnect` is never forwarded.** The radio session outlives individual TCP clients; forwarding per-client disconnects used to make the firmware reset phone state and reboot on the next `want_config_id`.
 - **Outgoing packets are echoed.** When a client transmits a packet (and `READ_ONLY_CLIENTS=false`, or the sender is primary), the packet is forwarded to the radio and mirrored as a `FromRadio` to *other* connected clients so their UIs stay in sync.

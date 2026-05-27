@@ -49,6 +49,29 @@
 
 Брокер расположен между физическим Meshtastic-радио и TCP-клиентами. Он владеет подключением к последовательному порту, хранит общее состояние и предоставляет радио как единый согласованный TCP-сервис.
 
+## Web UI (v0.2.0+)
+
+Начиная с **v0.2.0**, мост включает опциональный встроенный веб-интерфейс для отправки и приёма mesh-сообщений, просмотра каналов и мониторинга радио-активности.
+
+![Web UI — Чат](docs/webui-chat.png)
+*Чат — отправляйте и получайте mesh-сообщения в реальном времени*
+
+![Web UI — Каналы](docs/webui-channels.png)
+*Обзор каналов — список каналов радио с ролями и индексами*
+
+Включите флагом `--webui` или переменной `WEBUI_ENABLED=true`:
+
+```bash
+meshtastic-serial2tcp \
+  --device /dev/ttyUSB0 \
+  --baud 115200 \
+  --tcp-port 4403 \
+  --webui \
+  --webui-addr :8080
+```
+
+Откройте `http://<хост>:8080` в браузере. Интерфейс подключается к мосту через Server-Sent Events для чата, трафика и отладочных логов в реальном времени.
+
 ## Частые вопросы
 
 ### Почему не `ser2net`?
@@ -145,6 +168,21 @@ services:
       - /dev/ttyUSB0:/dev/ttyUSB0
 ```
 
+С включённым Web UI:
+
+```bash
+docker run --rm \
+  --device /dev/ttyUSB0 \
+  -p 4403:4403 \
+  -p 8080:8080 \
+  -e SERIAL_DEVICE=/dev/ttyUSB0 \
+  -e BAUD_RATE=115200 \
+  -e TCP_PORT=4403 \
+  -e WEBUI_ENABLED=true \
+  -e WEBUI_ADDR=:8080 \
+  ghcr.io/skrashevich/go-meshtastic-serial2tcp:latest
+```
+
 Примечания:
 
 - Для работы mDNS на Linux может потребоваться `--network host`, чтобы multicast-анонсы доходили до локальной сети. Если mDNS не нужен, укажите `-e MDNS_ENABLED=false`.
@@ -163,6 +201,8 @@ services:
 | `MDNS_ENABLED` | `true` | `--mdns` | Включить mDNS-анонсирование |
 | `READ_ONLY_CLIENTS` | `false` | `--read-only-clients` | Режим «только чтение» для неосновных клиентов |
 | `SERVICE_NAME` | `Meshtastic Serial Bridge (<device>)` | `--service-name` | Имя mDNS-сервиса |
+| `WEBUI_ENABLED` | `false` | `--webui` | Включить встроенный веб-интерфейс |
+| `WEBUI_ADDR` | `:8080` | `--webui-addr` | Адрес веб-интерфейса |
 | `DEBUG` | `false` | `--debug`, `-D` | Отладочный вывод protobuf + `[config]` |
 
 Проверка здоровья:
