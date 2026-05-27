@@ -140,7 +140,7 @@ func TestBrokerMultiClientLifecycle(t *testing.T) {
 	radio := newRadioSim()
 	defer radio.close()
 
-	b := New(radio.broker, false, false)
+	b := New(radio.broker, false, false, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
@@ -248,7 +248,7 @@ func TestBrokerSerialInvalidFrameIsNonFatal(t *testing.T) {
 	radio := newRadioSim()
 	defer radio.close()
 
-	b := New(radio.broker, false, false)
+	b := New(radio.broker, false, false, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 

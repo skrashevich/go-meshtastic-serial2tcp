@@ -12,6 +12,7 @@ import (
 	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/broker"
 	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/config"
 	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/serial"
+	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/webui"
 )
 
 const (
@@ -19,7 +20,7 @@ const (
 	maxRapidFails = 5
 )
 
-func Run(ctx context.Context, cfg config.Config) error {
+func Run(ctx context.Context, cfg config.Config, hub *webui.Hub) error {
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.TCPPort)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -90,7 +91,17 @@ func Run(ctx context.Context, cfg config.Config) error {
 		start := time.Now()
 		log.Printf("  Connected to: %s @ %dbps", cfg.Device, cfg.Baud)
 
-		b := broker.New(serialConn, cfg.ReadOnlyClients, cfg.Debug)
+		b := broker.New(serialConn, cfg.ReadOnlyClients, cfg.Debug, hub)
+		if hub != nil {
+			hub.SetRadioProvider(func() webui.Radio {
+				brokerMu.RLock()
+				active := current
+				brokerMu.RUnlock()
+				return active
+			})
+			hub.SetStatus(webui.Status{SerialConnected: true})
+			b.PublishStatus()
+		}
 		brokerMu.Lock()
 		current = b
 		brokerMu.Unlock()
@@ -113,6 +124,9 @@ func Run(ctx context.Context, cfg config.Config) error {
 		brokerMu.Lock()
 		current = nil
 		brokerMu.Unlock()
+		if hub != nil {
+			hub.SetStatus(webui.Status{SerialConnected: false})
+		}
 		b.CloseAll()
 		_ = serialConn.Close()
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/frame"
 	meshtasticpb "github.com/skrashevich/go-meshtastic-serial2tcp/internal/meshtastic"
+	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/webui"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -302,6 +303,7 @@ type Broker struct {
 	cache           *configCache
 	readOnlyClients bool
 	debug           bool
+	observability   *webui.Hub
 
 	pendingMu     sync.Mutex
 	pendingConfig map[uint32]configRequest
@@ -349,13 +351,14 @@ func (b *Broker) consumeOutboundOrigin(pkt *meshtasticpb.MeshPacket) *client {
 	return entry.client
 }
 
-func New(serial io.ReadWriter, readOnlyClients bool, debug bool) *Broker {
+func New(serial io.ReadWriter, readOnlyClients bool, debug bool, observability *webui.Hub) *Broker {
 	return &Broker{
 		serial:          serial,
 		clients:         make(map[*client]struct{}),
 		cache:           newConfigCache(),
 		readOnlyClients: readOnlyClients,
 		debug:           debug,
+		observability:   observability,
 		pendingConfig:   make(map[uint32]configRequest),
 		outboundByPacket: make(map[uint32]outboundEntry),
 		done:            make(chan struct{}),
@@ -388,6 +391,14 @@ func (b *Broker) fail(err error) {
 }
 
 func (b *Broker) logDecodedPayload(direction, addr string, payload []byte, kind payloadKind) {
+	if b.observability != nil {
+		switch kind {
+		case payloadFromRadio:
+			b.observability.ObservePayload(direction, addr, payload, true)
+		case payloadToRadio:
+			b.observability.ObservePayload(direction, addr, payload, false)
+		}
+	}
 	if !b.debug {
 		return
 	}
@@ -784,6 +795,29 @@ func (b *Broker) AddClient(conn net.Conn) {
 
 	go b.writeLoop(cl)
 	go b.readLoop(cl)
+	b.PublishStatus()
+}
+
+func (b *Broker) PublishStatus() {
+	if b.observability == nil {
+		return
+	}
+	b.clientsMu.RLock()
+	count := len(b.clients)
+	primary := ""
+	if b.primary != nil {
+		primary = b.primary.addr
+	}
+	b.clientsMu.RUnlock()
+	localNode, _ := b.LocalNodeNum()
+	b.observability.SetStatus(webui.Status{
+		SerialConnected: true,
+		ClientCount:     count,
+		PrimaryAddr:     primary,
+		CacheReady:      b.cache.ready(),
+		CacheSummary:    b.cache.describe(),
+		LocalNodeNum:    localNode,
+	})
 }
 
 // isPrimary reports whether the given client currently owns the radio session.
@@ -1046,6 +1080,9 @@ func (b *Broker) removeClient(cl *client) {
 
 	b.dropPendingForClient(cl)
 	cl.close()
+	if removed {
+		b.PublishStatus()
+	}
 }
 
 func (b *Broker) CloseAll() {

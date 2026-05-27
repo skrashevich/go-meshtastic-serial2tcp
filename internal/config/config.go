@@ -19,6 +19,8 @@ type Config struct {
 	MDNSEnabled     bool
 	ReadOnlyClients bool
 	Debug           bool
+	WebUI           bool
+	WebUIAddr       string
 }
 
 func Load() (Config, bool) {
@@ -29,6 +31,8 @@ func Load() (Config, bool) {
 	mdnsEnabled := getenvBool("MDNS_ENABLED", true)
 	readOnlyClients := getenvBool("READ_ONLY_CLIENTS", false)
 	debug := getenvBool("DEBUG", false)
+	webUI := getenvBool("WEB_UI", false)
+	webUIAddr := getenv("WEB_UI_ADDR", "127.0.0.1:9080")
 	serviceName := getenv("SERVICE_NAME", "")
 
 	healthcheck := flag.Bool("healthcheck", false, "exit 0 if the TCP port is reachable")
@@ -40,6 +44,8 @@ func Load() (Config, bool) {
 	readOnlyClientsFlag := flag.Bool("read-only-clients", readOnlyClients, "make secondary clients read-only (env READ_ONLY_CLIENTS)")
 	debugFlag := flag.Bool("debug", debug, "enable debug logging: protobuf JSON + [config] handshake trace (env DEBUG)")
 	debugShortFlag := flag.Bool("D", false, "shorthand for -debug")
+	webUIFlag := flag.Bool("web-ui", webUI, "enable local web UI for channel traffic and debug (env WEB_UI)")
+	webUIAddrFlag := flag.String("web-ui-addr", webUIAddr, "web UI listen address (env WEB_UI_ADDR)")
 	serviceNameFlag := flag.String("service-name", serviceName, "mDNS service name (env SERVICE_NAME)")
 
 	flag.Parse()
@@ -55,6 +61,11 @@ func Load() (Config, bool) {
 	mdnsEnabled = *mdnsEnabledFlag
 	readOnlyClients = *readOnlyClientsFlag
 	debug = *debugFlag || *debugShortFlag
+	webUI = *webUIFlag
+	webUIAddr = strings.TrimSpace(*webUIAddrFlag)
+	if webUIAddr == "" {
+		webUIAddr = "127.0.0.1:9080"
+	}
 	serviceName = strings.TrimSpace(*serviceNameFlag)
 	if serviceName == "" {
 		serviceName = fmt.Sprintf("Meshtastic Serial Bridge (%s)", sanitizeDeviceName(device))
@@ -69,6 +80,8 @@ func Load() (Config, bool) {
 		MDNSEnabled:     mdnsEnabled,
 		ReadOnlyClients: readOnlyClients,
 		Debug:           debug,
+		WebUI:           webUI,
+		WebUIAddr:       webUIAddr,
 	}, *healthcheck
 }
 
@@ -88,6 +101,9 @@ func PrintBanner(cfg Config, version string) {
 	}
 	if cfg.Debug {
 		log.Printf("  Debug Logging: enabled (protobuf decode + [config] WantConfigId/ConfigCompleteId)")
+	}
+	if cfg.WebUI {
+		log.Printf("  Web UI: http://%s", cfg.WebUIAddr)
 	}
 }
 

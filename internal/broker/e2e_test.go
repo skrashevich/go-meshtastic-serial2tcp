@@ -314,7 +314,7 @@ func TestE2EThreeClientsFullHandshakeAndSync(t *testing.T) {
 	defer radio.close()
 	radio.run(t)
 
-	b := New(radio.brokerEnd, false, false)
+	b := New(radio.brokerEnd, false, false, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 
 	runDone := make(chan error, 1)
@@ -501,7 +501,7 @@ func TestE2ERadioReconnectIsolation(t *testing.T) {
 	radio := newMeshtasticNodeSim()
 	radio.run(t)
 
-	b := New(radio.brokerEnd, false, false)
+	b := New(radio.brokerEnd, false, false, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
@@ -544,7 +544,7 @@ func TestE2ERebootedLoopRecovery(t *testing.T) {
 	defer radio.close()
 	radio.run(t)
 
-	b := New(radio.brokerEnd, false, false)
+	b := New(radio.brokerEnd, false, false, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	runDone := make(chan error, 1)
@@ -617,7 +617,7 @@ func TestE2EPrimaryDisconnectNotForwardedToRadio(t *testing.T) {
 	defer radio.close()
 	radio.run(t)
 
-	b := New(radio.brokerEnd, false, false)
+	b := New(radio.brokerEnd, false, false, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	runDone := make(chan error, 1)

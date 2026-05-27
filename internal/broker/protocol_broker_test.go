@@ -38,7 +38,7 @@ func TestProtocolBrokerWantConfigPrimaryForwardsAndTracks(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := New(serialW, false, false)
+	broker := New(serialW, false, false, nil)
 	client, peer := newTestClient()
 	defer peer.Close()
 	defer client.conn.Close()
@@ -90,7 +90,7 @@ func TestProtocolBrokerWantConfigReadOnlyUsesCache(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := New(serialW, true, false)
+	broker := New(serialW, true, false, nil)
 	primary, primaryPeer := newTestClient()
 	defer primaryPeer.Close()
 	defer primary.conn.Close()
@@ -139,7 +139,7 @@ func TestProtocolBrokerHandleConfigCompleteRewrites(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := New(serialW, false, false)
+	broker := New(serialW, false, false, nil)
 	client, peer := newTestClient()
 	defer peer.Close()
 	defer client.conn.Close()
@@ -170,7 +170,7 @@ func TestProtocolBrokerRemoveClientPromotesPrimary(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := New(serialW, true, false)
+	broker := New(serialW, true, false, nil)
 	primary, primaryPeer := newTestClient()
 	defer primaryPeer.Close()
 	secondary, secondaryPeer := newTestClient()
@@ -200,7 +200,7 @@ func TestProtocolBrokerPacketBroadcastExcludesSender(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := New(serialW, false, false)
+	broker := New(serialW, false, false, nil)
 	sender, peer1 := newTestClient()
 	defer peer1.Close()
 	defer sender.conn.Close()
@@ -266,7 +266,7 @@ func TestProtocolBrokerRadioEchoExcludesSender(t *testing.T) {
 	defer radioSide.Close()
 	defer brokerSide.Close()
 
-	broker := New(brokerSide, false, false)
+	broker := New(brokerSide, false, false, nil)
 	go func() {
 		reader := bufio.NewReader(radioSide)
 		for {
@@ -336,7 +336,7 @@ func TestProtocolBrokerAdminRadioEchoDeliveredToSender(t *testing.T) {
 	defer radioSide.Close()
 	defer brokerSide.Close()
 
-	broker := New(brokerSide, false, false)
+	broker := New(brokerSide, false, false, nil)
 	go func() {
 		reader := bufio.NewReader(radioSide)
 		for {
@@ -441,7 +441,7 @@ func TestProtocolBrokerSecondaryPacketForwardsWhenReadOnlyFalse(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := New(serialW, false, false)
+	broker := New(serialW, false, false, nil)
 	primary, peer1 := newTestClient()
 	defer peer1.Close()
 	defer primary.conn.Close()
@@ -495,7 +495,7 @@ func TestProtocolBrokerSecondaryPacketRejectedWhenReadOnlyTrue(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := New(serialW, true, false)
+	broker := New(serialW, true, false, nil)
 	primary, peer1 := newTestClient()
 	defer peer1.Close()
 	defer primary.conn.Close()
@@ -543,7 +543,7 @@ func TestProtocolBrokerNonPrimaryDisconnectDoesNotReachSerial(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := New(serialW, false, false)
+	broker := New(serialW, false, false, nil)
 	primary, peer1 := newTestClient()
 	defer peer1.Close()
 	secondary, peer2 := newTestClient()
@@ -596,7 +596,7 @@ func TestProtocolBrokerSecondaryWantConfigDoesNotReachSerial(t *testing.T) {
 
 	// readOnlyClients=false — confirms caching of WantConfigId is now
 	// independent of the flag.
-	broker := New(serialW, false, false)
+	broker := New(serialW, false, false, nil)
 	primary, peer1 := newTestClient()
 	defer peer1.Close()
 	defer primary.conn.Close()
@@ -670,7 +670,7 @@ func TestProtocolBrokerRepeatedWantConfigDoesNotLeakPending(t *testing.T) {
 		}
 	}()
 
-	broker := New(serialW, false, false)
+	broker := New(serialW, false, false, nil)
 	client, peer := newTestClient()
 	defer peer.Close()
 	defer client.conn.Close()
@@ -709,7 +709,7 @@ func TestProtocolBrokerAddClientTracksPrimaryAlways(t *testing.T) {
 	defer serialR.Close()
 	defer serialW.Close()
 
-	broker := New(serialW, false, false)
+	broker := New(serialW, false, false, nil)
 	c1, c1Peer := net.Pipe()
 	defer c1.Close()
 	defer c1Peer.Close()

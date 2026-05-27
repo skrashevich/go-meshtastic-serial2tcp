@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meshtastic Serial Bridge</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4d;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3d9eef;
+      --ok: #3dd68c;
+      --warn: #f0b429;
+      --out-bg: #1e3a5f;
+      --in-bg: #232b38;
+      --packet: #c792ea;
+      --channel: #82aaff;
+      --config: #ffcb6b;
+      --debug: #89ddff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.85rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: space-between;
+    }
+    h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    .status-pill {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+    }
+    .status-pill.ok { border-color: var(--ok); color: var(--ok); }
+    .status-pill.bad { border-color: var(--warn); color: var(--warn); }
+    nav {
+      display: flex;
+      gap: 0.25rem;
+      padding: 0 1rem;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    nav button {
+      background: none;
+      border: none;
+      color: var(--muted);
+      padding: 0.7rem 0.55rem;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      font-size: 0.88rem;
+      white-space: nowrap;
+    }
+    nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+    main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .panel { display: none; flex: 1; flex-direction: column; min-height: 0; padding: 0.75rem 1rem 1rem; }
+    .panel.active { display: flex; }
+    .chat-layout { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 0.65rem; }
+    .chat-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .chat-toolbar label { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 0.35rem; }
+    .chat-toolbar select, .chat-toolbar input[type="text"] {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 0.35rem 0.5rem;
+      font-size: 0.85rem;
+    }
+    .chat-toolbar input[type="text"] { width: 8rem; font-family: ui-monospace, monospace; }
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #0b0f14;
+      padding: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .bubble {
+      max-width: min(85%, 520px);
+      padding: 0.55rem 0.75rem;
+      border-radius: 12px;
+      font-size: 0.92rem;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+    .bubble.out { align-self: flex-end; background: var(--out-bg); border-bottom-right-radius: 4px; }
+    .bubble.in { align-self: flex-start; background: var(--in-bg); border-bottom-left-radius: 4px; }
+    .bubble .meta {
+      font-size: 0.68rem;
+      color: var(--muted);
+      margin-top: 0.35rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .chat-compose {
+      display: flex;
+      gap: 0.5rem;
+      align-items: flex-end;
+    }
+    .chat-compose textarea {
+      flex: 1;
+      min-height: 2.75rem;
+      max-height: 8rem;
+      resize: vertical;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.55rem 0.65rem;
+      font: inherit;
+      font-size: 0.95rem;
+    }
+    .chat-compose button {
+      background: var(--accent);
+      color: #061018;
+      border: none;
+      border-radius: 8px;
+      padding: 0.6rem 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .chat-compose button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .chat-hint { font-size: 0.75rem; color: var(--muted); }
+    .chat-error { font-size: 0.8rem; color: var(--warn); min-height: 1.1em; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 0.75rem;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem;
+    }
+    .card h3 { margin: 0 0 0.35rem; font-size: 0.95rem; }
+    .card .meta { font-size: 0.75rem; color: var(--muted); }
+    .log {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      flex: 1;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #0b0f14;
+      max-height: 70vh;
+    }
+    .log-row { padding: 0.45rem 0.65rem; border-bottom: 1px solid #151c26; word-break: break-word; }
+    .log-row:last-child { border-bottom: none; }
+    .tag {
+      display: inline-block;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      margin-right: 0.35rem;
+    }
+    .tag.packet { background: #2a1f3d; color: var(--packet); }
+    .tag.channel { background: #1a2744; color: var(--channel); }
+    .tag.config { background: #2e2618; color: var(--config); }
+    .tag.debug { background: #152a33; color: var(--debug); }
+    .tag.other { background: #1e2430; color: var(--muted); }
+    .time { color: var(--muted); margin-right: 0.4rem; }
+    .dir { color: var(--accent); }
+    .summary { color: var(--text); }
+    details pre { margin: 0.25rem 0 0; white-space: pre-wrap; color: var(--muted); font-size: 0.72rem; }
+    .toolbar { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+    .toolbar button, .toolbar label {
+      font-size: 0.8rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.35rem 0.65rem;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .toolbar label { display: flex; align-items: center; gap: 0.35rem; }
+    .empty { color: var(--muted); font-size: 0.9rem; text-align: center; padding: 2rem 1rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Meshtastic Serial Bridge</h1>
+    <div id="statusBar">
+      <span class="status-pill bad" id="connPill">connecting…</span>
+      <span class="status-pill" id="serialPill">serial —</span>
+      <span class="status-pill" id="nodePill">node —</span>
+    </div>
+  </header>
+  <nav>
+    <button type="button" data-tab="chat" class="active">Chat</button>
+    <button type="button" data-tab="channels">Channels</button>
+    <button type="button" data-tab="traffic">Traffic</button>
+    <button type="button" data-tab="debug">Debug</button>
+    <button type="button" data-tab="status">Status</button>
+  </nav>
+  <main>
+    <section class="panel active" id="panel-chat">
+      <div class="chat-layout">
+        <div class="chat-toolbar">
+          <label>Channel
+            <select id="chatChannel"></select>
+          </label>
+          <label>To (hex, empty = broadcast)
+            <input type="text" id="chatTo" placeholder="ffffffff" spellcheck="false">
+          </label>
+          <label><input type="checkbox" id="chatAllChannels"> All channels</label>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+          <p class="empty" id="chatEmpty">Waiting for messages… Connect a Meshtastic client or send from here once serial is up and MyInfo is cached.</p>
+        </div>
+        <p class="chat-error" id="chatError"></p>
+        <div class="chat-compose">
+          <textarea id="chatInput" rows="2" placeholder="Type a message…" maxlength="200"></textarea>
+          <button type="button" id="chatSend">Send</button>
+        </div>
+        <p class="chat-hint">Up to 200 characters. Broadcast uses destination <code>ffffffff</code>. Node ID appears after config sync.</p>
+      </div>
+    </section>
+    <section class="panel" id="panel-channels">
+      <div class="grid" id="channelGrid"></div>
+      <p class="empty" id="channelsEmpty">No channel definitions yet.</p>
+    </section>
+    <section class="panel" id="panel-traffic">
+      <div class="toolbar">
+        <button type="button" id="clearTraffic">Clear</button>
+        <label><input type="checkbox" id="trafficPause"> Pause</label>
+        <label><input type="checkbox" id="trafficOnlyPackets" checked> Packets only</label>
+      </div>
+      <div class="log" id="trafficLog"></div>
+    </section>
+    <section class="panel" id="panel-debug">
+      <div class="toolbar">
+        <button type="button" id="clearDebug">Clear</button>
+        <label><input type="checkbox" id="debugPause"> Pause</label>
+      </div>
+      <div class="log" id="debugLog"></div>
+    </section>
+    <section class="panel" id="panel-status">
+      <div class="card" style="max-width:36rem">
+        <h3>Bridge</h3>
+        <pre id="statusDetail" style="margin:0;font-size:0.8rem;color:var(--muted);white-space:pre-wrap"></pre>
+      </div>
+    </section>
+  </main>
+  <script>
+    const BROADCAST = 0xFFFFFFFF;
+    const state = {
+      channels: new Map(),
+      chats: [],
+      status: {},
+      localNode: 0,
+      trafficView: [],
+      debugView: [],
+    };
+
+    const chatMessages = document.getElementById('chatMessages');
+    const chatEmpty = document.getElementById('chatEmpty');
+    const chatChannel = document.getElementById('chatChannel');
+    const chatInput = document.getElementById('chatInput');
+    const chatSend = document.getElementById('chatSend');
+    const chatError = document.getElementById('chatError');
+    const chatTo = document.getElementById('chatTo');
+    const chatAllChannels = document.getElementById('chatAllChannels');
+
+    function fmtTime(iso) {
+      try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function nodeLabel(n) {
+      if (n === BROADCAST || n === 4294967295) return 'broadcast';
+      return '!'+Number(n).toString(16).padStart(8,'0');
+    }
+
+    function refreshChannelSelect() {
+      const prev = chatChannel.value;
+      chatChannel.innerHTML = '';
+      const list = [...state.channels.values()].sort((a,b) => a.index - b.index);
+      if (!list.length) {
+        const opt = document.createElement('option');
+        opt.value = '0';
+        opt.textContent = 'Channel 0 (primary)';
+        chatChannel.appendChild(opt);
+      } else {
+        for (const ch of list) {
+          const opt = document.createElement('option');
+          opt.value = String(ch.index);
+          opt.textContent = ch.name ? `${ch.name} (${ch.index})` : `Channel ${ch.index}`;
+          chatChannel.appendChild(opt);
+        }
+      }
+      if ([...chatChannel.options].some(o => o.value === prev)) chatChannel.value = prev;
+    }
+
+    function chatVisible(msg) {
+      if (chatAllChannels.checked) return true;
+      return Number(chatChannel.value) === msg.channel;
+    }
+
+    function renderChatBubble(msg) {
+      const div = document.createElement('div');
+      div.className = 'bubble ' + (msg.outgoing ? 'out' : 'in');
+      const ch = msg.channel_name ? ` · ${msg.channel_name}` : '';
+      div.innerHTML = `<div>${escapeHtml(msg.text)}</div>
+        <div class="meta">${fmtTime(msg.time)} · ch${msg.channel}${escapeHtml(ch)} · ${msg.outgoing ? 'you' : nodeLabel(msg.from)} → ${nodeLabel(msg.to)}</div>`;
+      return div;
+    }
+
+    function appendChat(msg) {
+      if (!chatVisible(msg)) return;
+      chatEmpty.style.display = 'none';
+      chatMessages.appendChild(renderChatBubble(msg));
+      while (chatMessages.children.length > 401) {
+        if (chatMessages.firstChild === chatEmpty) break;
+        chatMessages.removeChild(chatMessages.firstChild);
+      }
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function rebuildChatView() {
+      chatMessages.innerHTML = '';
+      const visible = state.chats.filter(chatVisible);
+      if (!visible.length) {
+        chatEmpty.style.display = 'block';
+        chatMessages.appendChild(chatEmpty);
+        return;
+      }
+      chatEmpty.style.display = 'none';
+      for (const msg of visible) chatMessages.appendChild(renderChatBubble(msg));
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function onChat(msg) {
+      const dup = state.chats.some(c => c.packet_id && c.packet_id === msg.packet_id);
+      if (!dup) state.chats.push(msg);
+      if (state.chats.length > 500) state.chats.shift();
+      appendChat(msg);
+    }
+
+    function parseToField() {
+      const raw = chatTo.value.trim().toLowerCase().replace(/^!/,'');
+      if (!raw) return BROADCAST;
+      const n = parseInt(raw, 16);
+      if (!Number.isFinite(n) || n < 0) throw new Error('invalid destination node');
+      return n >>> 0;
+    }
+
+    async function sendChat() {
+      chatError.textContent = '';
+      const text = chatInput.value.trim();
+      if (!text) return;
+      if (!state.status.serial_connected) {
+        chatError.textContent = 'Serial not connected';
+        return;
+      }
+      if (!state.localNode) {
+        chatError.textContent = 'Local node ID unknown — wait for config / MyInfo';
+        return;
+      }
+      chatSend.disabled = true;
+      try {
+        const to = parseToField();
+        const res = await fetch('/api/chat/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channel: Number(chatChannel.value),
+            to,
+            text,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          chatError.textContent = data.error || 'send failed';
+          return;
+        }
+        chatInput.value = '';
+        if (data.message) onChat(data.message);
+      } catch (e) {
+        chatError.textContent = String(e.message || e);
+      } finally {
+        chatSend.disabled = false;
+        chatInput.focus();
+      }
+    }
+
+    chatSend.addEventListener('click', sendChat);
+    chatInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+    });
+    chatChannel.addEventListener('change', rebuildChatView);
+    chatAllChannels.addEventListener('change', rebuildChatView);
+
+    function applyStatus(st) {
+      state.status = st || {};
+      state.localNode = st.local_node_num || 0;
+      document.getElementById('serialPill').textContent = st.serial_connected ? 'serial connected' : 'serial disconnected';
+      document.getElementById('serialPill').className = 'status-pill ' + (st.serial_connected ? 'ok' : 'bad');
+      document.getElementById('nodePill').textContent = state.localNode
+        ? 'node ' + nodeLabel(state.localNode) : 'node pending';
+      document.getElementById('statusDetail').textContent = JSON.stringify(st, null, 2);
+    }
+
+    function renderChannels() {
+      const grid = document.getElementById('channelGrid');
+      const empty = document.getElementById('channelsEmpty');
+      grid.innerHTML = '';
+      const list = [...state.channels.values()].sort((a,b) => a.index - b.index);
+      empty.style.display = list.length ? 'none' : 'block';
+      for (const ch of list) {
+        const el = document.createElement('div');
+        el.className = 'card';
+        el.innerHTML = `<h3>${escapeHtml(ch.name || 'Channel '+ch.index)}</h3>
+          <div class="meta">index ${ch.index}${ch.role ? ' · '+escapeHtml(ch.role) : ''}</div>`;
+        grid.appendChild(el);
+      }
+      refreshChannelSelect();
+    }
+
+    function tagClass(cat) {
+      return ({packet:'packet',channel:'channel',config:'config',debug:'debug'})[cat] || 'other';
+    }
+
+    function renderRow(ev) {
+      const ch = ev.channel_index != null ? `ch${ev.channel_index}` : '';
+      let html = `<div class="log-row"><span class="tag ${tagClass(ev.category)}">${ev.category}</span>
+        <span class="time">${fmtTime(ev.time)}</span> <span class="dir">${escapeHtml(ev.direction)}</span>`;
+      if (ev.summary) html += ` <span class="summary">${escapeHtml(ev.summary)}</span>`;
+      if (ch) html += ` <span class="summary">${ch}</span>`;
+      if (ev.json) html += `<details><summary>json</summary><pre>${escapeHtml(ev.json)}</pre></details>`;
+      return html + '</div>';
+    }
+
+    function appendToLog(container, ev, list, max) {
+      list.push(ev);
+      if (list.length > max) list.shift();
+      const wrap = document.createElement('div');
+      wrap.innerHTML = renderRow(ev);
+      container.appendChild(wrap.firstElementChild);
+      while (container.children.length > max) container.removeChild(container.firstChild);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function onEvent(ev) {
+      if (ev.channel_index != null && ev.channel_name) {
+        const idx = ev.channel_index;
+        state.channels.set(idx, { ...(state.channels.get(idx)||{index:idx}), name: ev.channel_name, updated: ev.time });
+        renderChannels();
+      }
+      if (!document.getElementById('trafficPause').checked) {
+        const only = document.getElementById('trafficOnlyPackets').checked;
+        if (!only || ev.category === 'packet' || ev.category === 'channel') {
+          appendToLog(document.getElementById('trafficLog'), ev, state.trafficView, 400);
+        }
+      }
+      if (!document.getElementById('debugPause').checked) {
+        appendToLog(document.getElementById('debugLog'), ev, state.debugView, 500);
+      }
+    }
+
+    function applySnapshot(data) {
+      if (data.channels) {
+        state.channels.clear();
+        for (const ch of data.channels) state.channels.set(ch.index, ch);
+        renderChannels();
+      }
+      if (data.status) applyStatus(data.status);
+      if (data.chats) {
+        state.chats = data.chats;
+        rebuildChatView();
+      }
+      if (data.events) {
+        const t = document.getElementById('trafficLog');
+        const d = document.getElementById('debugLog');
+        t.innerHTML = ''; d.innerHTML = '';
+        state.trafficView = []; state.debugView = [];
+        for (const ev of data.events) onEvent(ev);
+      }
+    }
+
+    function connect() {
+      const es = new EventSource('/api/events');
+      const connPill = document.getElementById('connPill');
+      es.addEventListener('open', () => { connPill.textContent = 'live'; connPill.className = 'status-pill ok'; });
+      es.addEventListener('error', () => { connPill.textContent = 'reconnecting…'; connPill.className = 'status-pill bad'; });
+      es.addEventListener('snapshot', (e) => { try { applySnapshot(JSON.parse(e.data)); } catch (_) {} });
+      es.addEventListener('message', (e) => { try { onEvent(JSON.parse(e.data)); } catch (_) {} });
+      es.addEventListener('chat', (e) => { try { onChat(JSON.parse(e.data)); } catch (_) {} });
+    }
+
+    document.querySelectorAll('nav button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+      });
+    });
+
+    document.getElementById('clearTraffic').onclick = () => {
+      document.getElementById('trafficLog').innerHTML = '';
+      state.trafficView = [];
+    };
+    document.getElementById('clearDebug').onclick = () => {
+      document.getElementById('debugLog').innerHTML = '';
+      state.debugView = [];
+    };
+
+    refreshChannelSelect();
+    connect();
+  </script>
+</body>
+</html>

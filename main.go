@@ -11,6 +11,7 @@ import (
 	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/config"
 	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/mdns"
 	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/server"
+	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/webui"
 )
 
 const version = "0.1"
@@ -44,7 +45,18 @@ func main() {
 		log.Printf("mDNS discovery disabled")
 	}
 
-	if err := server.Run(ctx, cfg); err != nil {
+	var hub *webui.Hub
+	if cfg.WebUI {
+		hub = webui.NewHub()
+		ui := webui.NewServer(hub, cfg.WebUIAddr)
+		go func() {
+			if err := ui.Start(ctx); err != nil {
+				log.Printf("Web UI stopped: %v", err)
+			}
+		}()
+	}
+
+	if err := server.Run(ctx, cfg, hub); err != nil {
 		log.Printf("ERROR: %v", err)
 		os.Exit(1)
 	}
