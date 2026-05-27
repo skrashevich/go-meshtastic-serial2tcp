@@ -28,6 +28,10 @@ COPY --from=build /out/go-meshtastic-serial2tcp /go-meshtastic-serial2tcp
 ENV SERIAL_DEVICE=/dev/ttyUSB0
 ENV BAUD_RATE=115200
 ENV TCP_PORT=4403
+ENV WEB_UI=true
+ENV WEB_UI_ADDR=0.0.0.0:9080
+
+EXPOSE 4403 9080
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
   CMD ["/go-meshtastic-serial2tcp", "--healthcheck"]

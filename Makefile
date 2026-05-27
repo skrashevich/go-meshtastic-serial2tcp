@@ -89,10 +89,16 @@ proto: proto-check ## Сгенерировать Go код из protobuf фай�
 
 	@echo "$(GREEN)✓ Генерация завершена успешно$(NC)"
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
+LDFLAGS ?= -ldflags "-X main.version=$(VERSION)"
+
 build: ## Собрать проект
 	@echo "$(GREEN)Сборка проекта...$(NC)"
-	@go build -v -o go-meshtastic-serial2tcp .
-	@echo "$(GREEN)✓ Сборка завершена$(NC)"
+	@go build -v $(LDFLAGS) -o go-meshtastic-serial2tcp .
+	@echo "$(GREEN)✓ Сборка завершена (version=$(VERSION))$(NC)"
+
+run: ## Запустить с версией из git describe
+	@go run $(LDFLAGS) .
 
 test: ## Запустить тесты
 	@echo "$(GREEN)Запуск тестов...$(NC)"

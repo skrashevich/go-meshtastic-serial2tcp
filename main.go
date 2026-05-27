@@ -4,7 +4,9 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/grandcat/zeroconf"
@@ -14,7 +16,30 @@ import (
 	"github.com/skrashevich/go-meshtastic-serial2tcp/internal/webui"
 )
 
-const version = "0.1"
+// Set at link time via -ldflags "-X main.version=..." (see Makefile and release workflow).
+var version = "dev"
+
+func appVersion() string {
+	v := strings.TrimSpace(version)
+	if v != "" && v != "dev" {
+		return v
+	}
+	if v, err := gitDescribe(); err == nil && v != "" {
+		return v
+	}
+	if v == "" {
+		return "dev"
+	}
+	return v
+}
+
+func gitDescribe() (string, error) {
+	out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "v"), nil
+}
 
 func main() {
 	log.SetFlags(0)
@@ -28,7 +53,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	config.PrintBanner(cfg, version)
+	config.PrintBanner(cfg, appVersion())
 
 	var mdnsServer *zeroconf.Server
 	if cfg.MDNSEnabled {
