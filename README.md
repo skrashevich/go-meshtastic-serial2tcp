@@ -48,6 +48,29 @@ In short: a simple forwarder passes bytes, while this service tries to preserve 
 
 The broker sits between the physical Meshtastic radio and multiple TCP clients. It owns the serial connection, maintains shared state, and exposes the radio as one coordinated TCP service.
 
+## Web UI (v0.2.0+)
+
+Starting with **v0.2.0**, the bridge includes an optional built-in web interface for sending and receiving mesh messages, browsing channels, and monitoring radio activity.
+
+![Web UI — Chat view](docs/webui-chat.png)
+*Chat interface — send and receive mesh messages in real-time*
+
+![Web UI — Channels view](docs/webui-channels.png)
+*Channel browser — list and navigate radio channels, each with role and index*
+
+Enable it with the `--webui` flag or `WEBUI_ENABLED=true` environment variable:
+
+```bash
+meshtastic-serial2tcp \
+  --device /dev/ttyUSB0 \
+  --baud 115200 \
+  --tcp-port 4403 \
+  --webui \
+  --webui-addr :8080
+```
+
+Open `http://<host>:8080` in any browser. The UI connects to the bridge via Server-Sent Events for real-time chat, packet traffic, and debug logs.
+
 ## FAQ
 
 ### Why not `ser2net`?
