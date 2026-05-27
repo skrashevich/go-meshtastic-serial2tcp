@@ -38,6 +38,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/snapshot", s.handleSnapshot)
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/chat/send", s.handleChatSend)
+	mux.HandleFunc("/api/chat/canned", s.handleChatCanned)
 
 	s.server = &http.Server{
 		Addr:              s.addr,
@@ -100,6 +101,21 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true, "message": msg})
+}
+
+func (s *Server) handleChatCanned(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	msgs, err := s.hub.FetchCanned(ctx)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error(), "messages": []string{}})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "messages": msgs})
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

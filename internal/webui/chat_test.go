@@ -2,6 +2,7 @@ package webui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ type mockRadio struct {
 	sentTo      uint32
 	sentText    string
 	nodeNum     uint32
+	canned      []string
 }
 
 func (m *mockRadio) SendTextMessage(channelIndex int32, to uint32, text string) (uint32, error) {
@@ -26,6 +28,10 @@ func (m *mockRadio) SendTextMessage(channelIndex int32, to uint32, text string) 
 
 func (m *mockRadio) LocalNodeNum() (uint32, bool) {
 	return m.nodeNum, m.nodeNum != 0
+}
+
+func (m *mockRadio) FetchCannedMessages(ctx context.Context) ([]string, error) {
+	return m.canned, nil
 }
 
 func TestSendChat(t *testing.T) {

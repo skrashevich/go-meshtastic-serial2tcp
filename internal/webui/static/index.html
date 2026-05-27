@@ -500,6 +500,50 @@
       line-height: 1.5;
     }
 
+    .canned-strip {
+      align-self: stretch;
+      padding: 0.85rem 1rem;
+      border-radius: var(--radius-sm);
+      border: 1px dashed rgba(245, 166, 35, 0.35);
+      background: rgba(245, 166, 35, 0.06);
+      animation: fadeIn 0.35s var(--ease);
+    }
+
+    .canned-title {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--signal);
+      margin-bottom: 0.55rem;
+    }
+
+    .canned-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+    }
+
+    .canned-chip {
+      font: inherit;
+      font-size: 0.82rem;
+      padding: 0.4rem 0.7rem;
+      border-radius: 999px;
+      border: 1px solid rgba(245, 166, 35, 0.35);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: background 0.15s, transform 0.15s var(--ease);
+      max-width: 100%;
+      text-align: left;
+      line-height: 1.3;
+    }
+
+    .canned-chip:hover {
+      background: var(--signal-dim);
+      transform: translateY(-1px);
+    }
+
     .msg {
       display: flex;
       gap: 0.55rem;
@@ -689,12 +733,30 @@
       border-radius: var(--radius);
       background: var(--surface);
       border: 1px solid var(--border);
-      transition: border-color 0.2s, transform 0.2s var(--ease);
+      transition: border-color 0.2s, transform 0.2s var(--ease), box-shadow 0.2s;
+      cursor: pointer;
+      text-align: left;
+      width: 100%;
+      font: inherit;
+      color: inherit;
     }
 
     .channel-card:hover {
-      border-color: var(--border-strong);
+      border-color: rgba(45, 212, 191, 0.35);
       transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    }
+
+    .channel-card:focus-visible {
+      outline: 2px solid var(--signal);
+      outline-offset: 2px;
+    }
+
+    .channel-card-hint {
+      font-size: 0.72rem;
+      color: var(--dim);
+      margin-top: 0.65rem;
+      font-family: var(--font-mono);
     }
 
     .channel-card h3 {
@@ -972,6 +1034,7 @@
 
         <section class="panel" id="panel-channels" aria-label="Channels">
           <p class="section-head">Radio channels</p>
+          <p class="channel-card-hint">Click a channel to open Chat with that channel selected.</p>
           <div class="channel-grid" id="channelGrid"></div>
           <div class="empty-state" id="channelsEmpty" style="display:none">
             <div class="glyph">⌁</div>
@@ -1050,6 +1113,10 @@
       localNode: 0,
       trafficView: [],
       debugView: [],
+      canned: [],
+      cannedLoading: false,
+      cannedAttempted: false,
+      prevSerialOk: false,
     };
 
     const chatMessages = document.getElementById('chatMessages');
@@ -1083,6 +1150,17 @@
       return s === 'broadcast' ? 'BC' : s.slice(1, 3).toUpperCase();
     }
 
+    function selectChatChannel(index, goToChat) {
+      chatAllChannels.checked = false;
+      chatChannel.value = String(index);
+      syncChannelPills();
+      rebuildChatView();
+      if (goToChat) {
+        setActiveTab('chat');
+        chatInput.focus();
+      }
+    }
+
     function refreshChannelSelect() {
       const prev = chatChannel.value;
       chatChannel.innerHTML = '';
@@ -1101,11 +1179,7 @@
         pill.className = 'ch-pill';
         pill.dataset.index = String(ch.index);
         pill.textContent = ch.name || `CH ${ch.index}`;
-        pill.addEventListener('click', () => {
-          chatChannel.value = String(ch.index);
-          syncChannelPills();
-          rebuildChatView();
-        });
+        pill.addEventListener('click', () => selectChatChannel(ch.index, false));
         channelPills.appendChild(pill);
       }
 
@@ -1124,6 +1198,85 @@
       return Number(chatChannel.value) === msg.channel;
     }
 
+    function hasVisibleChats() {
+      return state.chats.some(chatVisible);
+    }
+
+    function renderCannedStrip() {
+      let strip = document.getElementById('cannedStrip');
+      if (!state.canned.length) {
+        strip?.remove();
+        return;
+      }
+      if (!strip) {
+        strip = document.createElement('div');
+        strip.id = 'cannedStrip';
+        strip.className = 'canned-strip';
+        chatMessages.insertBefore(strip, chatEmpty);
+      }
+      strip.replaceChildren();
+      const title = document.createElement('p');
+      title.className = 'canned-title';
+      title.textContent = 'Canned on device — tap to insert';
+      strip.appendChild(title);
+      const chips = document.createElement('div');
+      chips.className = 'canned-chips';
+      for (const text of state.canned) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'canned-chip';
+        btn.textContent = text;
+        btn.addEventListener('click', () => {
+          chatInput.value = text;
+          updateCharCount();
+          chatInput.focus();
+        });
+        chips.appendChild(btn);
+      }
+      strip.appendChild(chips);
+    }
+
+    function updateChatEmptyState() {
+      const hasChats = hasVisibleChats();
+      if (hasChats) {
+        document.getElementById('cannedStrip')?.remove();
+        chatEmpty.style.display = 'none';
+        return;
+      }
+      renderCannedStrip();
+      const showLoader = state.cannedLoading && !state.canned.length;
+      chatEmpty.style.display = (state.canned.length || showLoader) ? 'none' : 'block';
+      if (showLoader) {
+        chatEmpty.style.display = 'block';
+        chatEmpty.querySelector('p').textContent = 'Loading canned messages from radio…';
+      } else if (!state.canned.length) {
+        chatEmpty.querySelector('p').textContent =
+          'No messages yet. When serial is up and MyInfo is cached, you can send to the mesh from here.';
+      }
+    }
+
+    async function maybeFetchCanned() {
+      if (hasVisibleChats()) return;
+      if (state.canned.length > 0) {
+        updateChatEmptyState();
+        return;
+      }
+      if (state.cannedAttempted || state.cannedLoading) return;
+      if (!state.status.serial_connected || !state.localNode) return;
+      state.cannedLoading = true;
+      updateChatEmptyState();
+      try {
+        const res = await fetch('/api/chat/canned');
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.messages) && data.messages.length) {
+          state.canned = data.messages;
+        }
+      } catch (_) { /* ignore */ }
+      state.cannedLoading = false;
+      state.cannedAttempted = true;
+      updateChatEmptyState();
+    }
+
     function renderChatBubble(msg) {
       const wrap = document.createElement('div');
       wrap.className = 'msg ' + (msg.outgoing ? 'out' : 'in');
@@ -1139,7 +1292,7 @@
 
     function appendChat(msg) {
       if (!chatVisible(msg)) return;
-      chatEmpty.style.display = 'none';
+      updateChatEmptyState();
       chatMessages.appendChild(renderChatBubble(msg));
       const maxNodes = 401;
       let kids = [...chatMessages.children].filter(c => c !== chatEmpty);
@@ -1152,14 +1305,15 @@
 
     function rebuildChatView() {
       [...chatMessages.querySelectorAll('.msg')].forEach(n => n.remove());
+      document.getElementById('cannedStrip')?.remove();
       const visible = state.chats.filter(chatVisible);
-      if (!visible.length) {
-        chatEmpty.style.display = 'block';
-        return;
-      }
-      chatEmpty.style.display = 'none';
       for (const msg of visible) chatMessages.appendChild(renderChatBubble(msg));
-      chatMessages.scrollTop = chatMessages.scrollHeight;
+      updateChatEmptyState();
+      if (visible.length) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      } else {
+        maybeFetchCanned();
+      }
     }
 
     function onChat(msg) {
@@ -1231,7 +1385,10 @@
     chatInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
     });
-    chatChannel.addEventListener('change', () => { syncChannelPills(); rebuildChatView(); });
+    chatChannel.addEventListener('change', () => {
+      syncChannelPills();
+      rebuildChatView();
+    });
     chatAllChannels.addEventListener('change', rebuildChatView);
 
     function applyStatus(st) {
@@ -1239,6 +1396,12 @@
       state.localNode = st.local_node_num || 0;
 
       const serialOk = !!st.serial_connected;
+      if (serialOk && !state.prevSerialOk) {
+        state.cannedAttempted = false;
+        state.canned = [];
+        document.getElementById('cannedStrip')?.remove();
+      }
+      state.prevSerialOk = serialOk;
       const serialPill = document.getElementById('serialPill');
       serialPill.textContent = serialOk ? 'serial on' : 'serial off';
       serialPill.className = 'pill ' + (serialOk ? 'ok' : 'bad');
@@ -1279,12 +1442,15 @@
       const list = [...state.channels.values()].sort((a,b) => a.index - b.index);
       empty.style.display = list.length ? 'none' : 'block';
       for (const ch of list) {
-        const el = document.createElement('article');
+        const el = document.createElement('button');
+        el.type = 'button';
         el.className = 'channel-card';
+        el.dataset.index = String(ch.index);
         el.innerHTML = `
           <div class="idx">index ${ch.index}</div>
           <h3>${escapeHtml(ch.name || 'Unnamed')}</h3>
           ${ch.role ? `<span class="role-badge">${escapeHtml(ch.role)}</span>` : ''}`;
+        el.addEventListener('click', () => selectChatChannel(ch.index, true));
         grid.appendChild(el);
       }
       refreshChannelSelect();
@@ -1355,6 +1521,7 @@
       document.getElementById('panel-' + tab).classList.add('active');
       const t = TAB_TITLES[tab] || ['', ''];
       pageTitle.innerHTML = `${t[0]} <span>${t[1]}</span>`;
+      if (tab === 'chat') maybeFetchCanned();
     }
 
     document.querySelectorAll('.nav-btn[data-tab]').forEach(btn => {

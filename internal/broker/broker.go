@@ -311,6 +311,11 @@ type Broker struct {
 	outboundMu       sync.Mutex
 	outboundByPacket map[uint32]outboundEntry
 
+	cannedMu      sync.Mutex
+	cannedWaiters map[uint32]cannedWait
+	cannedCache   []string
+	cannedCacheAt time.Time
+
 	done    chan struct{}
 	errOnce sync.Once
 	err     error
@@ -352,7 +357,7 @@ func (b *Broker) consumeOutboundOrigin(pkt *meshtasticpb.MeshPacket) *client {
 }
 
 func New(serial io.ReadWriter, readOnlyClients bool, debug bool, observability *webui.Hub) *Broker {
-	return &Broker{
+	b := &Broker{
 		serial:          serial,
 		clients:         make(map[*client]struct{}),
 		cache:           newConfigCache(),
@@ -363,6 +368,8 @@ func New(serial io.ReadWriter, readOnlyClients bool, debug bool, observability *
 		outboundByPacket: make(map[uint32]outboundEntry),
 		done:            make(chan struct{}),
 	}
+	b.initCannedState()
+	return b
 }
 
 func (b *Broker) Run(ctx context.Context) error {
@@ -683,6 +690,9 @@ func (b *Broker) readSerial(errCh chan<- error) {
 			continue
 		}
 		if pkt := msg.GetPacket(); pkt != nil {
+			if b.tryDeliverCanned(pkt) {
+				continue
+			}
 			if origin := b.consumeOutboundOrigin(pkt); origin != nil {
 				// Radio echo of a client-originated packet. Chat ports are
 				// suppressed for the sender (synthetic echo already went to
