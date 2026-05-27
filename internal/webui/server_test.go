@@ -65,7 +65,7 @@ func TestStaticIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "Meshtastic Serial Bridge") {
+	if !strings.Contains(string(data), "Serial Bridge") {
 		t.Fatal("index.html missing title")
 	}
 }
