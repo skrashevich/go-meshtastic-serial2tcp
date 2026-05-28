@@ -615,22 +615,50 @@
 
     .msg.out .msg-meta { text-align: right; }
 
-    .msg-proto {
-      margin-top: 0.35rem;
+    .msg-meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.35rem 0.5rem;
+      margin-top: 0.3rem;
+      padding: 0 0.2rem;
     }
 
-    .msg-proto summary {
-      cursor: pointer;
-      color: var(--muted);
+    .msg.out .msg-meta-row { justify-content: flex-end; }
+
+    .msg-meta-row .msg-meta { margin-top: 0; padding: 0; }
+
+    .msg-raw-btn {
       font-family: var(--font-mono);
       font-size: 0.62rem;
-      user-select: none;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
     }
 
-    .msg-proto summary:hover { color: var(--link); }
+    .msg-raw-btn:hover {
+      color: var(--link);
+      border-color: rgba(45, 212, 191, 0.35);
+      background: var(--link-dim);
+    }
 
-    .msg-proto pre {
+    .msg-raw-btn[aria-expanded="true"] {
+      color: var(--link);
+      border-color: rgba(45, 212, 191, 0.45);
+      background: var(--link-dim);
+    }
+
+    .msg-proto-panel {
       margin-top: 0.35rem;
+    }
+
+    .msg-proto-panel[hidden] { display: none; }
+
+    .msg-proto-panel pre {
       padding: 0.5rem 0.55rem;
       border-radius: var(--radius-sm);
       background: rgba(0, 0, 0, 0.35);
@@ -1311,16 +1339,33 @@
       const wrap = document.createElement('div');
       wrap.className = 'msg ' + (msg.outgoing ? 'out' : 'in');
       const ch = msg.channel_name ? msg.channel_name : `ch${msg.channel}`;
-      const proto = msg.proto_json
-        ? `<details class="msg-proto"><summary>protobuf</summary><pre>${escapeHtml(msg.proto_json)}</pre></details>`
+      const hasProto = !!msg.proto_json;
+      const rawBtn = hasProto
+        ? '<button type="button" class="msg-raw-btn" aria-expanded="false" aria-label="Show raw protobuf">raw</button>'
+        : '';
+      const protoPanel = hasProto
+        ? `<div class="msg-proto-panel" hidden><pre>${escapeHtml(msg.proto_json)}</pre></div>`
         : '';
       wrap.innerHTML = `
         <div class="msg-avatar" aria-hidden="true">${escapeHtml(avatarLabel(msg.from, msg.outgoing))}</div>
         <div class="msg-body">
           <div class="msg-bubble">${escapeHtml(msg.text)}</div>
-          <div class="msg-meta">${fmtTime(msg.time)} · ${escapeHtml(ch)} · ${msg.outgoing ? 'you' : escapeHtml(nodeLabel(msg.from))} → ${escapeHtml(nodeLabel(msg.to))}</div>
-          ${proto}
+          <div class="msg-meta-row">
+            <div class="msg-meta">${fmtTime(msg.time)} · ${escapeHtml(ch)} · ${msg.outgoing ? 'you' : escapeHtml(nodeLabel(msg.from))} → ${escapeHtml(nodeLabel(msg.to))}</div>
+            ${rawBtn}
+          </div>
+          ${protoPanel}
         </div>`;
+      if (hasProto) {
+        const btn = wrap.querySelector('.msg-raw-btn');
+        const panel = wrap.querySelector('.msg-proto-panel');
+        btn.addEventListener('click', () => {
+          const open = panel.hidden;
+          panel.hidden = !open;
+          btn.setAttribute('aria-expanded', String(open));
+          btn.textContent = open ? 'hide' : 'raw';
+        });
+      }
       return wrap;
     }
 
