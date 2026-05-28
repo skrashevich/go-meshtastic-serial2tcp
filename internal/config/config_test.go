@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestEnvHelpers(t *testing.T) {
 	t.Setenv("TEST_INT", "42")
@@ -41,5 +44,27 @@ func TestNormalizePositiveInt(t *testing.T) {
 func TestSanitizeDeviceName(t *testing.T) {
 	if got := sanitizeDeviceName("/dev/tty.usb0"); got != "_dev_tty_usb0" {
 		t.Fatalf("sanitizeDeviceName: got %q", got)
+	}
+}
+
+func TestFlagPassed(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"equals form", []string{"prog", "-web-ui-addr=0.0.0.0:9080"}, true},
+		{"space form", []string{"prog", "-web-ui-addr", "0.0.0.0:9080"}, true},
+		{"absent", []string{"prog", "-debug"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			old := os.Args
+			t.Cleanup(func() { os.Args = old })
+			os.Args = tt.args
+			if got := flagPassed("web-ui-addr"); got != tt.want {
+				t.Fatalf("flagPassed: got %v want %v", got, tt.want)
+			}
+		})
 	}
 }

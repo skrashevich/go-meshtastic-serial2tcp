@@ -32,7 +32,9 @@ func Load() (Config, bool) {
 	readOnlyClients := getenvBool("READ_ONLY_CLIENTS", false)
 	debug := getenvBool("DEBUG", false)
 	webUI := getenvBool("WEB_UI", false)
+	_, webUIAddrFromEnv := os.LookupEnv("WEB_UI_ADDR")
 	webUIAddr := getenv("WEB_UI_ADDR", "127.0.0.1:9080")
+	webUIAddrFromCLI := flagPassed("web-ui-addr")
 	serviceName := getenv("SERVICE_NAME", "")
 
 	healthcheck := flag.Bool("healthcheck", false, "exit 0 if the TCP port is reachable")
@@ -45,7 +47,7 @@ func Load() (Config, bool) {
 	debugFlag := flag.Bool("debug", debug, "enable debug logging: protobuf JSON + [config] handshake trace (env DEBUG)")
 	debugShortFlag := flag.Bool("D", false, "shorthand for -debug")
 	webUIFlag := flag.Bool("web-ui", webUI, "enable local web UI for channel traffic and debug (env WEB_UI)")
-	webUIAddrFlag := flag.String("web-ui-addr", webUIAddr, "web UI listen address (env WEB_UI_ADDR)")
+	webUIAddrFlag := flag.String("web-ui-addr", webUIAddr, "web UI listen address; also enables the UI when set on the CLI or via WEB_UI_ADDR (env WEB_UI_ADDR)")
 	serviceNameFlag := flag.String("service-name", serviceName, "mDNS service name (env SERVICE_NAME)")
 
 	flag.Parse()
@@ -61,7 +63,7 @@ func Load() (Config, bool) {
 	mdnsEnabled = *mdnsEnabledFlag
 	readOnlyClients = *readOnlyClientsFlag
 	debug = *debugFlag || *debugShortFlag
-	webUI = *webUIFlag
+	webUI = *webUIFlag || webUIAddrFromEnv || webUIAddrFromCLI
 	webUIAddr = strings.TrimSpace(*webUIAddrFlag)
 	if webUIAddr == "" {
 		webUIAddr = "127.0.0.1:9080"
@@ -158,4 +160,18 @@ func normalizePositiveInt(name string, value int, fallback int) int {
 func sanitizeDeviceName(device string) string {
 	replacer := strings.NewReplacer("/", "_", ".", "_")
 	return replacer.Replace(device)
+}
+
+// flagPassed reports whether name was set on the command line (e.g. -web-ui-addr or -web-ui-addr=host:port).
+func flagPassed(name string) bool {
+	prefix := "-" + name
+	for i, arg := range os.Args[1:] {
+		if arg == prefix || strings.HasPrefix(arg, prefix+"=") {
+			return true
+		}
+		if arg == prefix && i+1 < len(os.Args)-1 {
+			return true
+		}
+	}
+	return false
 }
