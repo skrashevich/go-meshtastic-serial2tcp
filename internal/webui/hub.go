@@ -6,7 +6,10 @@ import (
 	"time"
 )
 
-const defaultMaxEvents = 1000
+const (
+	defaultMaxEvents      = 1000
+	maxPacketProtoCache   = 2048
+)
 
 // Event is a single observability record for the web UI.
 type Event struct {
@@ -46,6 +49,7 @@ type Hub struct {
 	maxEvents     int
 	chats         []ChatMessage
 	maxChat       int
+	packetProtos  map[uint32]string
 	channels      map[int32]ChannelInfo
 	status        Status
 	subscribers   map[chan Event]struct{}
@@ -57,8 +61,9 @@ func NewHub() *Hub {
 	return &Hub{
 		maxEvents:   defaultMaxEvents,
 		maxChat:     defaultMaxChat,
-		channels:    make(map[int32]ChannelInfo),
-		subscribers: make(map[chan Event]struct{}),
+		channels:     make(map[int32]ChannelInfo),
+		packetProtos: make(map[uint32]string),
+		subscribers:  make(map[chan Event]struct{}),
 		chatSubs:    make(map[chan ChatMessage]struct{}),
 	}
 }

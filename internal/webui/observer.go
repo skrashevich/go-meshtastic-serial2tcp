@@ -52,6 +52,7 @@ func (h *Hub) observeFromRadio(direction, addr string, frame *meshtasticpb.FromR
 	case *meshtasticpb.FromRadio_Packet:
 		ev.Category = "packet"
 		h.enrichPacketEvent(&ev, v.Packet)
+		h.cachePacketProto(v.Packet)
 		h.tryRecordChatPacket(v.Packet)
 	case *meshtasticpb.FromRadio_Config,
 		*meshtasticpb.FromRadio_ModuleConfig,
@@ -80,6 +81,7 @@ func (h *Hub) observeToRadio(direction, addr string, frame *meshtasticpb.ToRadio
 	case *meshtasticpb.ToRadio_Packet:
 		ev.Category = "packet"
 		h.enrichPacketEvent(&ev, v.Packet)
+		h.cachePacketProto(v.Packet)
 		h.tryRecordChatPacket(v.Packet)
 	case *meshtasticpb.ToRadio_WantConfigId:
 		ev.Category = "config"

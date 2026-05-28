@@ -83,6 +83,10 @@ func (h *Hub) RecordChat(msg ChatMessage) {
 		h.mu.RUnlock()
 	}
 
+	if updated := h.mergeDuplicateChat(msg); updated != nil {
+		h.notifyChat(*updated)
+		return
+	}
 	if h.isDuplicateChat(msg) {
 		return
 	}
@@ -92,12 +96,17 @@ func (h *Hub) RecordChat(msg ChatMessage) {
 	if len(h.chats) > h.maxChat {
 		h.chats = h.chats[len(h.chats)-h.maxChat:]
 	}
+	h.mu.Unlock()
+	h.notifyChat(msg)
+}
+
+func (h *Hub) notifyChat(msg ChatMessage) {
+	h.mu.RLock()
 	subs := make([]chan ChatMessage, 0, len(h.chatSubs))
 	for ch := range h.chatSubs {
 		subs = append(subs, ch)
 	}
-	h.mu.Unlock()
-
+	h.mu.RUnlock()
 	for _, ch := range subs {
 		select {
 		case ch <- msg:
@@ -111,6 +120,13 @@ func (h *Hub) SnapshotChat() []ChatMessage {
 	defer h.mu.RUnlock()
 	out := make([]ChatMessage, len(h.chats))
 	copy(out, h.chats)
+	for i := range out {
+		if out[i].ProtoJSON == "" && out[i].PacketID != 0 {
+			if s := h.lookupPacketProto(out[i].PacketID); s != "" {
+				out[i].ProtoJSON = s
+			}
+		}
+	}
 	return out
 }
 
@@ -152,7 +168,7 @@ func (h *Hub) TryRecordChatFromPacket(pkt *meshtasticpb.MeshPacket, localNode ui
 		Channel:   int32(pkt.GetChannel()),
 		Outgoing:  outgoing,
 		PacketID:  pkt.GetId(),
-		ProtoJSON: marshalProtoJSONFull(pkt),
+		ProtoJSON: h.protoJSONForPacket(pkt),
 	}
 	h.RecordChat(msg)
 }
@@ -204,6 +220,42 @@ func isChatPort(p meshtasticpb.PortNum) bool {
 
 func (h *Hub) MarshalChat(msg ChatMessage) ([]byte, error) {
 	return json.Marshal(msg)
+}
+
+func (h *Hub) mergeDuplicateChat(msg ChatMessage) *ChatMessage {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.chats) - 1; i >= 0 && i >= len(h.chats)-8; i-- {
+		prev := &h.chats[i]
+		dup := false
+		if msg.PacketID != 0 && prev.PacketID == msg.PacketID {
+			dup = true
+		}
+		if prev.Outgoing && msg.Outgoing && prev.Text == msg.Text && prev.Channel == msg.Channel &&
+			msg.Time.Sub(prev.Time) < 2*time.Second {
+			dup = true
+		}
+		if !dup {
+			continue
+		}
+		updated := false
+		if msg.ProtoJSON != "" && prev.ProtoJSON == "" {
+			prev.ProtoJSON = msg.ProtoJSON
+			updated = true
+		}
+		if prev.ProtoJSON == "" && msg.PacketID != 0 {
+			if s := h.packetProtos[msg.PacketID]; s != "" {
+				prev.ProtoJSON = s
+				updated = true
+			}
+		}
+		if updated {
+			copy := *prev
+			return &copy
+		}
+		return nil
+	}
+	return nil
 }
 
 func (h *Hub) isDuplicateChat(msg ChatMessage) bool {

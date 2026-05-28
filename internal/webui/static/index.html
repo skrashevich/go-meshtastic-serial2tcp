@@ -1339,12 +1339,15 @@
       const wrap = document.createElement('div');
       wrap.className = 'msg ' + (msg.outgoing ? 'out' : 'in');
       const ch = msg.channel_name ? msg.channel_name : `ch${msg.channel}`;
-      const hasProto = !!msg.proto_json;
-      const rawBtn = hasProto
+      const hasRaw = !!(msg.proto_json || msg.packet_id);
+      const rawBtn = hasRaw
         ? '<button type="button" class="msg-raw-btn" aria-expanded="false" aria-label="Show raw protobuf">raw</button>'
         : '';
-      const protoPanel = hasProto
-        ? `<div class="msg-proto-panel" hidden><pre>${escapeHtml(msg.proto_json)}</pre></div>`
+      const protoBody = msg.proto_json
+        ? escapeHtml(msg.proto_json)
+        : 'Raw protobuf is not available for this message (re-send it or check Debug traffic after restart).';
+      const protoPanel = hasRaw
+        ? `<div class="msg-proto-panel" hidden><pre>${protoBody}</pre></div>`
         : '';
       wrap.innerHTML = `
         <div class="msg-avatar" aria-hidden="true">${escapeHtml(avatarLabel(msg.from, msg.outgoing))}</div>
@@ -1356,7 +1359,7 @@
           </div>
           ${protoPanel}
         </div>`;
-      if (hasProto) {
+      if (hasRaw) {
         const btn = wrap.querySelector('.msg-raw-btn');
         const panel = wrap.querySelector('.msg-proto-panel');
         btn.addEventListener('click', () => {
@@ -1396,8 +1399,17 @@
     }
 
     function onChat(msg) {
-      const dup = state.chats.some(c => c.packet_id && c.packet_id === msg.packet_id);
-      if (!dup) state.chats.push(msg);
+      if (msg.packet_id) {
+        const idx = state.chats.findIndex(c => c.packet_id === msg.packet_id);
+        if (idx >= 0) {
+          if (msg.proto_json && !state.chats[idx].proto_json) {
+            state.chats[idx].proto_json = msg.proto_json;
+            rebuildChatView();
+          }
+          return;
+        }
+      }
+      state.chats.push(msg);
       if (state.chats.length > 500) state.chats.shift();
       appendChat(msg);
     }

@@ -62,6 +62,43 @@ func TestSendChat(t *testing.T) {
 	}
 }
 
+func TestRecordChatMergesProtoOnDuplicatePacketID(t *testing.T) {
+	h := NewHub()
+	h.RecordChat(ChatMessage{PacketID: 42, Text: "hi", Outgoing: true})
+	h.RecordChat(ChatMessage{
+		PacketID:  42,
+		Text:      "hi",
+		Outgoing:  true,
+		ProtoJSON: `{"id":42,"decoded":{"portnum":"TEXT_MESSAGE_APP"}}`,
+	})
+	chats := h.SnapshotChat()
+	if chats[0].ProtoJSON == "" {
+		t.Fatal("expected proto_json merged into existing chat")
+	}
+}
+
+func TestSnapshotChatBackfillsProtoFromCache(t *testing.T) {
+	h := NewHub()
+	pkt := &meshtasticpb.MeshPacket{
+		Id:      99,
+		From:    1,
+		To:      BroadcastNode,
+		Channel: 0,
+		PayloadVariant: &meshtasticpb.MeshPacket_Decoded{
+			Decoded: &meshtasticpb.Data{
+				Portnum: meshtasticpb.PortNum_TEXT_MESSAGE_APP,
+				Payload: []byte("x"),
+			},
+		},
+	}
+	h.cachePacketProto(pkt)
+	h.RecordChat(ChatMessage{PacketID: 99, Text: "x", From: 1})
+	chats := h.SnapshotChat()
+	if chats[0].ProtoJSON == "" {
+		t.Fatal("expected snapshot to backfill proto_json from packet cache")
+	}
+}
+
 func TestTryRecordChatFromPacket(t *testing.T) {
 	h := NewHub()
 	pkt := &meshtasticpb.MeshPacket{
