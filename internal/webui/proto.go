@@ -11,6 +11,14 @@ import (
 const maxEventJSON = 2048
 
 func marshalProtoJSON(msg proto.Message) string {
+	return marshalProtoJSONLimit(msg, maxEventJSON)
+}
+
+func marshalProtoJSONFull(msg proto.Message) string {
+	return marshalProtoJSONLimit(msg, 0)
+}
+
+func marshalProtoJSONLimit(msg proto.Message, maxLen int) string {
 	data, err := protojson.MarshalOptions{
 		UseProtoNames: true,
 		Multiline:     false,
@@ -18,8 +26,8 @@ func marshalProtoJSON(msg proto.Message) string {
 	if err != nil {
 		return ""
 	}
-	if len(data) > maxEventJSON {
-		return string(data[:maxEventJSON]) + fmt.Sprintf(" ...(truncated %d chars)", len(data)-maxEventJSON)
+	if maxLen > 0 && len(data) > maxLen {
+		return string(data[:maxLen]) + fmt.Sprintf(" ...(truncated %d chars)", len(data)-maxLen)
 	}
 	return string(data)
 }

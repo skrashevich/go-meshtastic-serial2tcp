@@ -21,6 +21,7 @@ type ChatMessage struct {
 	ChannelName string    `json:"channel_name,omitempty"`
 	Outgoing    bool      `json:"outgoing"`
 	PacketID    uint32    `json:"packet_id,omitempty"`
+	ProtoJSON   string    `json:"proto_json,omitempty"`
 }
 
 // Hub chat storage and radio access.
@@ -52,13 +53,14 @@ func (h *Hub) SendChat(channel int32, to uint32, text string) (ChatMessage, erro
 	}
 	from, _ := r.LocalNodeNum()
 	msg := ChatMessage{
-		Time:     time.Now().UTC(),
-		Text:     text,
-		From:     from,
-		To:       to,
-		Channel:  channel,
-		Outgoing: true,
-		PacketID: pktID,
+		Time:      time.Now().UTC(),
+		Text:      text,
+		From:      from,
+		To:        to,
+		Channel:   channel,
+		Outgoing:  true,
+		PacketID:  pktID,
+		ProtoJSON: chatMeshPacketJSON(from, to, channel, pktID, text),
 	}
 	h.mu.RLock()
 	if ch, ok := h.channels[channel]; ok {
@@ -143,15 +145,32 @@ func (h *Hub) TryRecordChatFromPacket(pkt *meshtasticpb.MeshPacket, localNode ui
 	}
 	outgoing := localNode != 0 && pkt.GetFrom() == localNode
 	msg := ChatMessage{
-		Time:     time.Now().UTC(),
-		Text:     text,
-		From:     pkt.GetFrom(),
-		To:       pkt.GetTo(),
-		Channel:  int32(pkt.GetChannel()),
-		Outgoing: outgoing,
-		PacketID: pkt.GetId(),
+		Time:      time.Now().UTC(),
+		Text:      text,
+		From:      pkt.GetFrom(),
+		To:        pkt.GetTo(),
+		Channel:   int32(pkt.GetChannel()),
+		Outgoing:  outgoing,
+		PacketID:  pkt.GetId(),
+		ProtoJSON: marshalProtoJSONFull(pkt),
 	}
 	h.RecordChat(msg)
+}
+
+func chatMeshPacketJSON(from, to uint32, channel int32, id uint32, text string) string {
+	pkt := &meshtasticpb.MeshPacket{
+		From:    from,
+		To:      to,
+		Channel: uint32(channel),
+		Id:      id,
+		PayloadVariant: &meshtasticpb.MeshPacket_Decoded{
+			Decoded: &meshtasticpb.Data{
+				Portnum: meshtasticpb.PortNum_TEXT_MESSAGE_APP,
+				Payload: []byte(text),
+			},
+		},
+	}
+	return marshalProtoJSONFull(pkt)
 }
 
 func chatTextFromData(data *meshtasticpb.Data) string {

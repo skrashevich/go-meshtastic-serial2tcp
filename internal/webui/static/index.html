@@ -615,6 +615,36 @@
 
     .msg.out .msg-meta { text-align: right; }
 
+    .msg-proto {
+      margin-top: 0.35rem;
+    }
+
+    .msg-proto summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      user-select: none;
+    }
+
+    .msg-proto summary:hover { color: var(--link); }
+
+    .msg-proto pre {
+      margin-top: 0.35rem;
+      padding: 0.5rem 0.55rem;
+      border-radius: var(--radius-sm);
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border);
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--dim);
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      line-height: 1.45;
+      max-height: 200px;
+      overflow: auto;
+    }
+
     .compose-bar {
       flex-shrink: 0;
       display: flex;
@@ -1281,11 +1311,15 @@
       const wrap = document.createElement('div');
       wrap.className = 'msg ' + (msg.outgoing ? 'out' : 'in');
       const ch = msg.channel_name ? msg.channel_name : `ch${msg.channel}`;
+      const proto = msg.proto_json
+        ? `<details class="msg-proto"><summary>protobuf</summary><pre>${escapeHtml(msg.proto_json)}</pre></details>`
+        : '';
       wrap.innerHTML = `
         <div class="msg-avatar" aria-hidden="true">${escapeHtml(avatarLabel(msg.from, msg.outgoing))}</div>
         <div class="msg-body">
           <div class="msg-bubble">${escapeHtml(msg.text)}</div>
           <div class="msg-meta">${fmtTime(msg.time)} · ${escapeHtml(ch)} · ${msg.outgoing ? 'you' : escapeHtml(nodeLabel(msg.from))} → ${escapeHtml(nodeLabel(msg.to))}</div>
+          ${proto}
         </div>`;
       return wrap;
     }

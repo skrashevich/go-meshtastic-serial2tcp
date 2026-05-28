@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	meshtasticpb "github.com/skrashevich/go-meshtastic-serial2tcp/internal/meshtastic"
@@ -56,6 +57,9 @@ func TestSendChat(t *testing.T) {
 	if len(chats) != 1 {
 		t.Fatalf("chats: %d", len(chats))
 	}
+	if chats[0].ProtoJSON == "" {
+		t.Fatal("expected proto_json on outgoing chat message")
+	}
 }
 
 func TestTryRecordChatFromPacket(t *testing.T) {
@@ -73,8 +77,15 @@ func TestTryRecordChatFromPacket(t *testing.T) {
 		},
 	}
 	h.TryRecordChatFromPacket(pkt, 0x11)
-	if len(h.SnapshotChat()) != 1 {
+	chats := h.SnapshotChat()
+	if len(chats) != 1 {
 		t.Fatal("expected one chat message")
+	}
+	if chats[0].ProtoJSON == "" {
+		t.Fatal("expected proto_json on chat message")
+	}
+	if !strings.Contains(chats[0].ProtoJSON, "TEXT_MESSAGE_APP") {
+		t.Fatalf("proto_json missing port: %s", chats[0].ProtoJSON)
 	}
 	h.TryRecordChatFromPacket(pkt, 0x11)
 	if len(h.SnapshotChat()) != 1 {
