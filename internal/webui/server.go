@@ -68,9 +68,12 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	events, channels, status := s.hub.Snapshot()
 	sort.Slice(channels, func(i, j int) bool { return channels[i].Index < channels[j].Index })
+	nodes := s.hub.SnapshotNodes()
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Num < nodes[j].Num })
 	writeJSON(w, map[string]any{
 		"events":   events,
 		"channels": channels,
+		"nodes":    nodes,
 		"status":   status,
 		"chats":    s.hub.SnapshotChat(),
 	})
@@ -136,10 +139,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	events, channels, status := s.hub.Snapshot()
 	sort.Slice(channels, func(i, j int) bool { return channels[i].Index < channels[j].Index })
+	nodes := s.hub.SnapshotNodes()
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Num < nodes[j].Num })
 	if data, err := json.Marshal(map[string]any{
 		"type":     "snapshot",
 		"events":   events,
 		"channels": channels,
+		"nodes":    nodes,
 		"status":   status,
 		"chats":    s.hub.SnapshotChat(),
 	}); err == nil {
@@ -151,6 +157,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	defer evUnsub()
 	chatCh, chatUnsub := s.hub.SubscribeChat(64)
 	defer chatUnsub()
+	nodeCh, nodeUnsub := s.hub.SubscribeNodes(16)
+	defer nodeUnsub()
 
 	ctx := r.Context()
 	for {
@@ -176,6 +184,17 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			fmt.Fprintf(w, "event: chat\ndata: %s\n\n", data)
+			flusher.Flush()
+		case nodes, ok := <-nodeCh:
+			if !ok {
+				return
+			}
+			sort.Slice(nodes, func(i, j int) bool { return nodes[i].Num < nodes[j].Num })
+			data, err := s.hub.MarshalNodes(nodes)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "event: nodes\ndata: %s\n\n", data)
 			flusher.Flush()
 		}
 	}

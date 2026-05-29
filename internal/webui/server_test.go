@@ -9,11 +9,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	meshtasticpb "github.com/skrashevich/go-meshtastic-serial2tcp/internal/meshtastic"
 )
 
 func TestHandleSnapshot(t *testing.T) {
 	h := NewHub()
 	h.UpdateChannel(1, "test", "SECONDARY")
+	h.UpdateNodeFromInfo(&meshtasticpb.NodeInfo{
+		Num:  0x1234,
+		User: &meshtasticpb.User{LongName: "Node A"},
+	})
 	s := NewServer(h, "127.0.0.1:0")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/snapshot", nil)
@@ -26,6 +32,9 @@ func TestHandleSnapshot(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `"channels"`) || !strings.Contains(body, "test") {
 		t.Fatalf("unexpected body: %s", body)
+	}
+	if !strings.Contains(body, `"nodes"`) || !strings.Contains(body, "Node A") {
+		t.Fatalf("snapshot missing nodes: %s", body)
 	}
 }
 
@@ -67,5 +76,8 @@ func TestStaticIndex(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "Serial Bridge") {
 		t.Fatal("index.html missing title")
+	}
+	if !strings.Contains(string(data), "panel-nodes") {
+		t.Fatal("index.html missing nodes panel")
 	}
 }

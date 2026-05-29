@@ -1,6 +1,8 @@
 package webui
 
 import (
+	"time"
+
 	meshtasticpb "github.com/skrashevich/go-meshtastic-serial2tcp/internal/meshtastic"
 	"google.golang.org/protobuf/proto"
 )
@@ -54,11 +56,21 @@ func (h *Hub) observeFromRadio(direction, addr string, frame *meshtasticpb.FromR
 		h.enrichPacketEvent(&ev, v.Packet)
 		h.cachePacketProto(v.Packet)
 		h.tryRecordChatPacket(v.Packet)
+	case *meshtasticpb.FromRadio_NodeInfo:
+		if ni := v.NodeInfo; ni != nil {
+			h.UpdateNodeFromInfo(ni)
+			ev.Category = "config"
+			ev.Summary = nodeInfoSummary(ni)
+		}
+	case *meshtasticpb.FromRadio_MyInfo:
+		if mi := v.MyInfo; mi != nil {
+			h.SetLocalNodeNum(mi.GetMyNodeNum())
+			ev.Category = "config"
+			ev.Summary = "MyInfo"
+		}
 	case *meshtasticpb.FromRadio_Config,
 		*meshtasticpb.FromRadio_ModuleConfig,
 		*meshtasticpb.FromRadio_ConfigCompleteId,
-		*meshtasticpb.FromRadio_MyInfo,
-		*meshtasticpb.FromRadio_NodeInfo,
 		*meshtasticpb.FromRadio_Metadata,
 		*meshtasticpb.FromRadio_DeviceuiConfig:
 		ev.Category = "config"
@@ -107,6 +119,11 @@ func (h *Hub) enrichPacketEvent(ev *Event, pkt *meshtasticpb.MeshPacket) {
 	if data := pkt.GetDecoded(); data != nil {
 		ev.Summary = packetSummary(data)
 	}
+	at := ev.Time
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	h.touchNodeActivity(pkt.GetFrom(), pkt.GetRxSnr(), at)
 }
 
 func packetSummary(data *meshtasticpb.Data) string {

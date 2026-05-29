@@ -842,6 +842,104 @@
       letter-spacing: 0.05em;
     }
 
+    /* —— Nodes table —— */
+    .nodes-wrap {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      min-height: 0;
+      gap: 0.75rem;
+    }
+
+    .nodes-table-wrap {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: rgba(6, 8, 10, 0.9);
+    }
+
+    .nodes-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    .nodes-table th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      text-align: left;
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--dim);
+      padding: 0.65rem 0.85rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nodes-table td {
+      padding: 0.7rem 0.85rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    .nodes-table tr:last-child td { border-bottom: none; }
+
+    .nodes-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .nodes-table tr.local td {
+      background: rgba(245, 166, 35, 0.06);
+    }
+
+    .node-id {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--link);
+    }
+
+    .node-name {
+      font-weight: 600;
+    }
+
+    .node-sub {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 0.15rem;
+    }
+
+    .status-badge {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .status-badge.online {
+      background: rgba(127, 217, 98, 0.15);
+      color: var(--ok);
+    }
+
+    .status-badge.offline {
+      background: rgba(126, 132, 148, 0.12);
+      color: var(--muted);
+    }
+
+    .nodes-meta {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
     /* —— Logs —— */
     .log-panel {
       display: flex;
@@ -1016,6 +1114,10 @@
           <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
           Channels
         </button>
+        <button type="button" class="nav-btn" data-tab="nodes">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5 20v-1a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v1"/><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M5 18v-1a2 2 0 0 1 2-2"/><path d="M19 18v-1a2 2 0 0 0-2-2"/></svg>
+          Nodes
+        </button>
         <button type="button" class="nav-btn" data-tab="traffic">
           <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           Traffic
@@ -1100,6 +1202,33 @@
           </div>
         </section>
 
+        <section class="panel" id="panel-nodes" aria-label="Nodes">
+          <div class="nodes-wrap">
+            <p class="section-head">Mesh nodes</p>
+            <p class="channel-card-hint">Populated from pass-through serial traffic (<code>FromRadio.node_info</code> and packets). No proactive node DB requests.</p>
+            <div class="nodes-table-wrap">
+              <table class="nodes-table" id="nodesTable">
+                <thead>
+                  <tr>
+                    <th>Node</th>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Last activity</th>
+                    <th>SNR</th>
+                    <th>Hops</th>
+                    <th>Battery</th>
+                  </tr>
+                </thead>
+                <tbody id="nodesBody"></tbody>
+              </table>
+            </div>
+            <div class="empty-state" id="nodesEmpty" style="display:none">
+              <div class="glyph">⬡</div>
+              <p>Nodes appear after config sync (<code>FromRadio.node_info</code>) or when mesh packets are observed.</p>
+            </div>
+          </div>
+        </section>
+
         <section class="panel" id="panel-traffic" aria-label="Traffic">
           <div class="log-panel">
             <div class="toolbar">
@@ -1139,6 +1268,10 @@
         <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
         Ch
       </button>
+      <button type="button" class="nav-btn" data-tab="nodes">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5 20v-1a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v1"/></svg>
+        Nd
+      </button>
       <button type="button" class="nav-btn" data-tab="traffic">
         <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
         I/O
@@ -1159,6 +1292,7 @@
     const TAB_TITLES = {
       chat: ['Chat', 'mesh messages'],
       channels: ['Channels', 'definitions'],
+      nodes: ['Nodes', 'mesh peers'],
       traffic: ['Traffic', 'live I/O'],
       debug: ['Debug', 'protobuf stream'],
       status: ['Status', 'bridge health'],
@@ -1166,6 +1300,7 @@
 
     const state = {
       channels: new Map(),
+      nodes: new Map(),
       chats: [],
       status: {},
       localNode: 0,
@@ -1191,6 +1326,44 @@
 
     function fmtTime(iso) {
       try { return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return iso; }
+    }
+
+    function fmtRelativeActivity(node) {
+      let ts = 0;
+      if (node.last_activity) {
+        ts = Date.parse(node.last_activity);
+      } else if (node.last_heard) {
+        ts = node.last_heard * 1000;
+      }
+      if (!ts || Number.isNaN(ts)) return '—';
+      const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+      if (sec < 60) return 'just now';
+      if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+      if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+      return `${Math.floor(sec / 86400)}d ago`;
+    }
+
+    function fmtHops(node) {
+      if (node.hops_away == null) return '—';
+      return String(node.hops_away);
+    }
+
+    function fmtBattery(node) {
+      if (node.battery_level == null) return '—';
+      const pct = node.battery_level;
+      return pct > 100 ? 'plugged' : `${pct}%`;
+    }
+
+    function fmtSnr(node) {
+      if (node.snr == null || node.snr === 0) return '—';
+      return `${node.snr.toFixed(1)} dB`;
+    }
+
+    function nodeDisplayName(node) {
+      if (node.long_name) return node.long_name;
+      if (node.short_name) return node.short_name;
+      if (node.user_id) return node.user_id;
+      return 'Unknown';
     }
 
     function escapeHtml(s) {
@@ -1581,6 +1754,48 @@
       refreshChannelSelect();
     }
 
+    function applyNodes(list) {
+      if (!Array.isArray(list)) return;
+      state.nodes.clear();
+      for (const n of list) state.nodes.set(n.num, n);
+      renderNodes();
+    }
+
+    function renderNodes() {
+      const body = document.getElementById('nodesBody');
+      const empty = document.getElementById('nodesEmpty');
+      const tableWrap = document.querySelector('.nodes-table-wrap');
+      body.innerHTML = '';
+      const list = [...state.nodes.values()].sort((a, b) => {
+        if (a.is_local !== b.is_local) return a.is_local ? -1 : 1;
+        const an = (a.long_name || a.short_name || '').toLowerCase();
+        const bn = (b.long_name || b.short_name || '').toLowerCase();
+        if (an && bn && an !== bn) return an.localeCompare(bn);
+        return a.num - b.num;
+      });
+      const hasNodes = list.length > 0;
+      empty.style.display = hasNodes ? 'none' : 'block';
+      tableWrap.style.display = hasNodes ? 'block' : 'none';
+      for (const n of list) {
+        const tr = document.createElement('tr');
+        if (n.is_local) tr.classList.add('local');
+        const subParts = [];
+        if (n.short_name && n.short_name !== n.long_name) subParts.push(n.short_name);
+        if (n.role) subParts.push(n.role.replace(/^Config_DeviceConfig_/, '').toLowerCase());
+        if (n.hw_model && n.hw_model !== 'UNSET') subParts.push(n.hw_model.replace(/^HardwareModel_/, ''));
+        if (n.via_mqtt) subParts.push('mqtt');
+        tr.innerHTML = `
+          <td><div class="node-id">${escapeHtml(nodeLabel(n.num))}</div>${n.is_local ? '<div class="node-sub">local radio</div>' : ''}</td>
+          <td><div class="node-name">${escapeHtml(nodeDisplayName(n))}</div>${subParts.length ? `<div class="node-sub">${escapeHtml(subParts.join(' · '))}</div>` : ''}</td>
+          <td><span class="status-badge ${n.online ? 'online' : 'offline'}">${n.online ? 'online' : 'offline'}</span></td>
+          <td class="nodes-meta">${escapeHtml(fmtRelativeActivity(n))}</td>
+          <td class="nodes-meta">${escapeHtml(fmtSnr(n))}</td>
+          <td class="nodes-meta">${escapeHtml(fmtHops(n))}</td>
+          <td class="nodes-meta">${escapeHtml(fmtBattery(n))}</td>`;
+        body.appendChild(tr);
+      }
+    }
+
     function tagClass(cat) {
       return ({packet:'packet',channel:'channel',config:'config',debug:'debug'})[cat] || 'other';
     }
@@ -1633,6 +1848,7 @@
         for (const ch of data.channels) state.channels.set(ch.index, ch);
         renderChannels();
       }
+      if (data.nodes) applyNodes(data.nodes);
       if (data.status) applyStatus(data.status);
       if (data.chats) { state.chats = data.chats; rebuildChatView(); }
       if (data.events) {
@@ -1665,6 +1881,7 @@
       es.addEventListener('snapshot', (e) => { try { applySnapshot(JSON.parse(e.data)); } catch (_) {} });
       es.addEventListener('message', (e) => { try { onEvent(JSON.parse(e.data)); } catch (_) {} });
       es.addEventListener('chat', (e) => { try { onChat(JSON.parse(e.data)); } catch (_) {} });
+      es.addEventListener('nodes', (e) => { try { const d = JSON.parse(e.data); applyNodes(d.nodes); } catch (_) {} });
     }
 
     document.getElementById('clearTraffic').onclick = () => {
@@ -1677,6 +1894,7 @@
     };
 
     refreshChannelSelect();
+    renderNodes();
     updateCharCount();
     connect();
   </script>

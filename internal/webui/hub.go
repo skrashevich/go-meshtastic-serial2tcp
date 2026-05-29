@@ -51,9 +51,12 @@ type Hub struct {
 	maxChat       int
 	packetProtos  map[uint32]string
 	channels      map[int32]ChannelInfo
+	nodes         map[uint32]NodeView
+	localNodeNum  uint32
 	status        Status
 	subscribers   map[chan Event]struct{}
 	chatSubs      map[chan ChatMessage]struct{}
+	nodeSubs      map[chan []NodeView]struct{}
 	radioProvider func() Radio
 }
 
@@ -62,6 +65,7 @@ func NewHub() *Hub {
 		maxEvents:   defaultMaxEvents,
 		maxChat:     defaultMaxChat,
 		channels:     make(map[int32]ChannelInfo),
+		nodes:        make(map[uint32]NodeView),
 		packetProtos: make(map[uint32]string),
 		subscribers:  make(map[chan Event]struct{}),
 		chatSubs:    make(map[chan ChatMessage]struct{}),
@@ -113,7 +117,13 @@ func (h *Hub) UpdateChannel(index int32, name, role string) {
 func (h *Hub) SetStatus(st Status) {
 	h.mu.Lock()
 	h.status = st
+	if st.LocalNodeNum != 0 {
+		h.localNodeNum = st.LocalNodeNum
+	}
 	h.mu.Unlock()
+	if st.LocalNodeNum != 0 {
+		h.notifyNodes()
+	}
 }
 
 func (h *Hub) Snapshot() (events []Event, channels []ChannelInfo, status Status) {
