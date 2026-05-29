@@ -283,7 +283,14 @@ type configRequest struct {
 	originalID uint32
 }
 
-const outboundEchoSuppress = 30 * time.Second
+const (
+	outboundEchoSuppress      = 30 * time.Second
+	brokerBootstrapConfigID   = 1
+)
+
+// bootstrapClientAddr labels broker-initiated WantConfigId traffic in logs
+// and observability when no TCP client owns the handshake.
+const bootstrapClientAddr = "bootstrap"
 
 type outboundEntry struct {
 	client *client
@@ -375,6 +382,9 @@ func New(serial io.ReadWriter, readOnlyClients bool, debug bool, observability *
 func (b *Broker) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go b.readSerial(errCh)
+	if b.observability != nil {
+		go b.bootstrapConfig()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -738,12 +748,16 @@ func (b *Broker) handleRebooted() {
 	b.pendingMu.Unlock()
 
 	for _, req := range old {
-		if req.client == nil || req.client.isClosed() {
+		if req.client != nil && req.client.isClosed() {
 			continue
 		}
 		newID := b.reserveConfigRequest(req.client, req.originalID)
+		addr := bootstrapClientAddr
+		if req.client != nil {
+			addr = req.client.addr
+		}
 		b.logConfig("rebooted re-issue WantConfigId client=%s original=0x%x wire=0x%x",
-			req.client.addr, req.originalID, newID)
+			addr, req.originalID, newID)
 		toRadio := &meshtasticpb.ToRadio{
 			PayloadVariant: &meshtasticpb.ToRadio_WantConfigId{WantConfigId: newID},
 		}
@@ -755,14 +769,14 @@ func (b *Broker) handleRebooted() {
 }
 
 func (b *Broker) handleConfigComplete(id uint32, payload []byte) {
-	req := b.takeConfigRequest(id)
-	if req.client == nil {
-		// Either the requesting client disconnected after we sent its
-		// WantConfigId, or this is a spurious ConfigCompleteId. Broadcasting
-		// it would deliver a complete-id that no remaining client actually
-		// asked for (the id in the payload is our rewritten random one, not
-		// any client's original). Drop silently.
+	req, ok := b.takeConfigRequest(id)
+	if !ok {
 		log.Printf("Dropping ConfigCompleteId without pending request: id=%d", id)
+		return
+	}
+	if req.client == nil {
+		b.logConfig("ConfigCompleteId from radio wire=0x%x (bootstrap)", id)
+		b.PublishStatus()
 		return
 	}
 
@@ -1127,12 +1141,42 @@ func (b *Broker) reserveConfigRequest(client *client, original uint32) uint32 {
 	}
 }
 
-func (b *Broker) takeConfigRequest(id uint32) configRequest {
+func (b *Broker) takeConfigRequest(id uint32) (configRequest, bool) {
 	b.pendingMu.Lock()
 	defer b.pendingMu.Unlock()
-	req := b.pendingConfig[id]
+	req, ok := b.pendingConfig[id]
+	if !ok {
+		return configRequest{}, false
+	}
 	delete(b.pendingConfig, id)
-	return req
+	return req, true
+}
+
+// bootstrapConfig requests a config dump from the radio when the broker owns
+// the serial session but no TCP client has sent WantConfigId yet. Without this
+// the firmware stays idle and the web UI never receives channels or node info.
+func (b *Broker) bootstrapConfig() {
+	if b.observability == nil || b.cache.ready() {
+		return
+	}
+
+	b.pendingMu.Lock()
+	for _, req := range b.pendingConfig {
+		if req.client == nil {
+			b.pendingMu.Unlock()
+			return
+		}
+	}
+	b.pendingMu.Unlock()
+
+	newID := b.reserveConfigRequest(nil, brokerBootstrapConfigID)
+	b.logConfig("bootstrap WantConfigId wire=0x%x", newID)
+	toRadio := &meshtasticpb.ToRadio{
+		PayloadVariant: &meshtasticpb.ToRadio_WantConfigId{WantConfigId: newID},
+	}
+	if err := b.forwardToSerial(toRadio); err != nil {
+		b.fail(err)
+	}
 }
 
 func (b *Broker) dropPendingForClient(cl *client) {
