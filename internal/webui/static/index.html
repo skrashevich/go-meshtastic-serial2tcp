@@ -458,7 +458,7 @@
       flex: 1;
       min-height: 0;
       overflow-y: auto;
-      scroll-behavior: smooth;
+      overflow-anchor: auto;
       border: 1px solid var(--border);
       border-radius: var(--radius);
       background: rgba(8, 10, 12, 0.7);
@@ -1197,6 +1197,43 @@
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
+    const SCROLL_PIN_THRESHOLD = 72;
+
+    function isNearBottom(el, threshold = SCROLL_PIN_THRESHOLD) {
+      if (!el) return true;
+      return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+    }
+
+    function scrollToBottomInstant(el) {
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function scrollContribution(el, container) {
+      if (!el) return 0;
+      const gap = parseFloat(getComputedStyle(container).rowGap)
+        || parseFloat(getComputedStyle(container).gap) || 0;
+      return el.offsetHeight + gap;
+    }
+
+    function trimFromTop(container, maxCount, filterFn) {
+      let kids = [...container.children].filter(filterFn);
+      let removedHeight = 0;
+      while (kids.length > maxCount) {
+        removedHeight += scrollContribution(kids[0], container);
+        kids[0].remove();
+        kids = [...container.children].filter(filterFn);
+      }
+      return removedHeight;
+    }
+
+    function finishAppendScroll(container, wasAtBottom, removedFromTop) {
+      if (wasAtBottom) {
+        scrollToBottomInstant(container);
+      } else if (removedFromTop > 0) {
+        container.scrollTop = Math.max(0, container.scrollTop - removedFromTop);
+      }
+    }
+
     function nodeLabel(n) {
       if (n === BROADCAST || n === 4294967295) return 'broadcast';
       return '!'+Number(n).toString(16).padStart(8,'0');
@@ -1375,25 +1412,22 @@
     function appendChat(msg) {
       if (!chatVisible(msg)) return;
       updateChatEmptyState();
+      const stick = isNearBottom(chatMessages);
       chatMessages.appendChild(renderChatBubble(msg));
-      const maxNodes = 401;
-      let kids = [...chatMessages.children].filter(c => c !== chatEmpty);
-      while (kids.length > maxNodes) {
-        kids[0].remove();
-        kids = [...chatMessages.children].filter(c => c !== chatEmpty);
-      }
-      chatMessages.scrollTop = chatMessages.scrollHeight;
+      const removed = trimFromTop(chatMessages, 401, c => c !== chatEmpty);
+      finishAppendScroll(chatMessages, stick, removed);
     }
 
     function rebuildChatView() {
+      const stick = isNearBottom(chatMessages);
       [...chatMessages.querySelectorAll('.msg')].forEach(n => n.remove());
       document.getElementById('cannedStrip')?.remove();
       const visible = state.chats.filter(chatVisible);
       for (const msg of visible) chatMessages.appendChild(renderChatBubble(msg));
       updateChatEmptyState();
-      if (visible.length) {
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-      } else {
+      if (visible.length && stick) {
+        scrollToBottomInstant(chatMessages);
+      } else if (!visible.length) {
         maybeFetchCanned();
       }
     }
@@ -1564,11 +1598,16 @@
     function appendToLog(container, ev, list, max) {
       list.push(ev);
       if (list.length > max) list.shift();
+      const stick = isNearBottom(container);
+      let removedHeight = 0;
       const wrap = document.createElement('div');
       wrap.innerHTML = renderRow(ev);
       container.appendChild(wrap.firstElementChild);
-      while (container.children.length > max) container.removeChild(container.firstChild);
-      container.scrollTop = container.scrollHeight;
+      while (container.children.length > max) {
+        removedHeight += scrollContribution(container.firstElementChild, container);
+        container.removeChild(container.firstElementChild);
+      }
+      finishAppendScroll(container, stick, removedHeight);
     }
 
     function onEvent(ev) {
