@@ -24,13 +24,8 @@ func TestSetBaudRateUnix(t *testing.T) {
 	if term.Cflag&rate == 0 {
 		t.Fatalf("expected Cflag to include baud rate %v", rate)
 	}
-	for _, v := range baudrateMap {
-		if v == rate {
-			continue
-		}
-		if term.Cflag&v != 0 {
-			t.Fatalf("expected Cflag to clear baud rate %v", v)
-		}
+	if got := term.Cflag & unix.CBAUD; got != rate {
+		t.Fatalf("unexpected baud bits in Cflag: got=%v want=%v", got, rate)
 	}
 
 	if err := SetBaudRate(term, 12345); err == nil {
