@@ -3,6 +3,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Go Reference](https://pkg.go.dev/badge/github.com/skrashevich/go-meshtastic-serial2tcp.svg)](https://pkg.go.dev/github.com/skrashevich/go-meshtastic-serial2tcp)
 [![GitHub release](https://img.shields.io/github/v/release/skrashevich/go-meshtastic-serial2tcp?include_prereleases)](https://github.com/skrashevich/go-meshtastic-serial2tcp/releases)
+[![Download binaries](https://img.shields.io/badge/dawnl.ink-download%20binaries-blue)](https://dawnl.ink/skrashevich/go-meshtastic-serial2tcp/workflows/release/main)
 
 
 [Русская версия](README.ru.md)
